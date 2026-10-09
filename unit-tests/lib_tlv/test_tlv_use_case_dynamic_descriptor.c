@@ -69,6 +69,48 @@ void test_valid_dynamic_descriptor(void)
 }
 
 /* -------------------------------------------------------------------------- */
+/* Test: Output is fully reset, no stale state survives parsing               */
+/* -------------------------------------------------------------------------- */
+
+void test_dynamic_descriptor_dirty_output(void)
+{
+    uint8_t payload[256];
+    size_t  offset = 0;
+
+    append_tlv_uint8(payload, &offset, 0x01, 0x90);
+    append_tlv_uint8(payload, &offset, 0x02, 0x01);
+    append_tlv_uint32(payload, &offset, 0x03, 0x8000003C);
+    append_tlv_string(payload, &offset, 0x04, APPNAME);
+    append_tlv_string(payload, &offset, 0x05, "BTC");
+    append_tlv_uint8(payload, &offset, 0x06, 0x08);
+    uint8_t tuid[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+    append_tlv(payload, &offset, 0x07, tuid, sizeof(tuid));
+    uint8_t signature[64] = {0};
+    memset(signature, 0x42, sizeof(signature));
+    append_tlv(payload, &offset, 0x08, signature, sizeof(signature));
+
+    buffer_t                     buf = {.ptr = payload, .size = offset, .offset = 0};
+    tlv_dynamic_descriptor_out_t out;
+    // Simulate an uninitialized / reused output structure
+    memset(&out, 0xFF, sizeof(out));
+
+    check_signature_with_pki_IgnoreAndReturn(CHECK_SIGNATURE_WITH_PKI_SUCCESS);
+    tlv_dynamic_descriptor_status_t result = tlv_use_case_dynamic_descriptor(&buf, &out);
+
+    TEST_ASSERT_EQUAL_INT(result, TLV_DYNAMIC_DESCRIPTOR_SUCCESS);
+    TEST_ASSERT_EQUAL_INT(out.TUID.size, 4);
+    TEST_ASSERT_EQUAL_INT(out.TUID.offset, 0);
+    TEST_ASSERT_EQUAL_MEMORY(out.TUID.ptr, tuid, 4);
+    TEST_ASSERT_EQUAL_STRING(out.ticker, "BTC");
+
+    // NULL parameters are rejected
+    TEST_ASSERT_EQUAL_INT(tlv_use_case_dynamic_descriptor(&buf, NULL),
+                          TLV_DYNAMIC_DESCRIPTOR_PARSING_ERROR);
+    TEST_ASSERT_EQUAL_INT(tlv_use_case_dynamic_descriptor(NULL, &out),
+                          TLV_DYNAMIC_DESCRIPTOR_PARSING_ERROR);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Test: Missing structure type tag                                           */
 /* -------------------------------------------------------------------------- */
 
@@ -381,6 +423,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_valid_dynamic_descriptor);
+    RUN_TEST(test_dynamic_descriptor_dirty_output);
     RUN_TEST(test_missing_structure_type);
     RUN_TEST(test_wrong_structure_type);
     RUN_TEST(test_missing_version_tag);

@@ -321,8 +321,16 @@ bool get_buffer_from_tlv_data(const tlv_data_t *data,
         PRINTF("Expected at most %d bytes, found %d\n", max_size, data->value.size);
         return false;
     }
-    out->size = data->value.size;
-    out->ptr  = data->value.ptr;
+    if (data->value.size != 0 && data->value.ptr == NULL) {
+        PRINTF("Non-empty TLV value has a NULL pointer\n");
+        return false;
+    }
+    // Fully initialize the output, the caller is not required to pre-zero it
+    *out = (buffer_t) {
+        .ptr    = data->value.ptr,
+        .size   = data->value.size,
+        .offset = 0,
+    };
     return true;
 }
 

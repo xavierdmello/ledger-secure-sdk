@@ -24,8 +24,20 @@
 #include "varint.h"
 #include "write.h"
 
+/**
+ * Reject inconsistent buffer states (offset beyond size) before any
+ * `size - offset` computation, which would otherwise wrap around.
+ */
+static inline bool buffer_is_consistent(const buffer_t *buffer)
+{
+    return buffer->offset <= buffer->size;
+}
+
 bool buffer_can_read(const buffer_t *buffer, size_t n)
 {
+    if (!buffer_is_consistent(buffer)) {
+        return false;
+    }
     return buffer->size - buffer->offset >= n;
 }
 
@@ -129,6 +141,12 @@ bool buffer_read_u64(buffer_t *buffer, uint64_t *value, endianness_t endianness)
 
 bool buffer_read_varint(buffer_t *buffer, uint64_t *value)
 {
+    if (!buffer_is_consistent(buffer)) {
+        *value = 0;
+
+        return false;
+    }
+
     int length = varint_read(buffer->ptr + buffer->offset, buffer->size - buffer->offset, value);
 
     if (length < 0) {
@@ -142,6 +160,10 @@ bool buffer_read_varint(buffer_t *buffer, uint64_t *value)
 
 bool buffer_read_bip32_path(buffer_t *buffer, uint32_t *out, size_t out_len)
 {
+    if (!buffer_is_consistent(buffer)) {
+        return false;
+    }
+
     if (!bip32_path_read(
             buffer->ptr + buffer->offset, buffer->size - buffer->offset, out, out_len)) {
         return false;
@@ -179,7 +201,7 @@ bool buffer_get_path_bip32(buffer_t *buffer, path_bip32_t *bip32)
 
 bool buffer_copy(const buffer_t *buffer, uint8_t *out, size_t out_len)
 {
-    if (buffer->size - buffer->offset > out_len) {
+    if (!buffer_is_consistent(buffer) || buffer->size - buffer->offset > out_len) {
         return false;
     }
 
@@ -206,7 +228,7 @@ bool buffer_peek(const buffer_t *buffer, uint8_t *value)
 
 bool buffer_peek_n(const buffer_t *buffer, size_t n, uint8_t *value)
 {
-    if (buffer->size - buffer->offset < n + 1) {
+    if (!buffer_is_consistent(buffer) || n >= buffer->size - buffer->offset) {
         return false;
     }
 
@@ -217,7 +239,7 @@ bool buffer_peek_n(const buffer_t *buffer, size_t n, uint8_t *value)
 
 WEAK bool buffer_read_bytes(buffer_t *buffer, uint8_t *out, size_t n)
 {
-    if (buffer->size - buffer->offset < n) {
+    if (!buffer_is_consistent(buffer) || buffer->size - buffer->offset < n) {
         return false;
     }
 

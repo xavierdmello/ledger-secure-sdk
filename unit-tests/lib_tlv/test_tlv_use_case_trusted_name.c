@@ -75,6 +75,61 @@ void test_valid_trusted_name_v1(void)
 }
 
 /* -------------------------------------------------------------------------- */
+/* Test: Output is fully reset, no stale state survives parsing               */
+/* -------------------------------------------------------------------------- */
+
+void test_trusted_name_dirty_output(void)
+{
+    uint8_t payload[256];
+    size_t  offset = 0;
+
+    append_tlv_uint8(payload, &offset, 0x01, TLV_STRUCTURE_TYPE_TRUSTED_NAME);
+    append_tlv_uint8(payload, &offset, 0x02, 0x01);
+    append_tlv_uint8(payload, &offset, 0x70, TLV_TRUSTED_NAME_TYPE_EOA);
+    append_tlv_uint8(payload, &offset, 0x71, TLV_TRUSTED_NAME_SOURCE_CRYPTO_ASSET_LIST);
+    append_tlv_string(payload, &offset, 0x20, "Ledger");
+    append_tlv_uint64(payload, &offset, 0x23, 1);
+    append_tlv_string(payload, &offset, 0x22, "0x1234567890abcdef1234567890abcdef12345678");
+    append_tlv_uint16(payload, &offset, 0x13, TLV_TRUSTED_NAME_SIGNER_KEY_ID_PROD);
+    append_tlv_uint8(payload, &offset, 0x14, TLV_TRUSTED_NAME_SIGNER_ALGORITHM_ECDSA_KECCAK_256);
+    uint8_t signature[64] = {0};
+    memset(signature, 0x42, sizeof(signature));
+    append_tlv(payload, &offset, 0x15, signature, sizeof(signature));
+
+    buffer_t               buf = {.ptr = payload, .size = offset, .offset = 0};
+    tlv_trusted_name_out_t out;
+    // Simulate an uninitialized / reused output structure
+    memset(&out, 0xFF, sizeof(out));
+
+    check_signature_with_pki_IgnoreAndReturn(CHECK_SIGNATURE_WITH_PKI_SUCCESS);
+    tlv_trusted_name_status_t result = tlv_use_case_trusted_name(&buf, &out);
+
+    TEST_ASSERT_EQUAL_INT(result, TLV_TRUSTED_NAME_SUCCESS);
+    TEST_ASSERT_EQUAL_INT(out.trusted_name.size, 6);
+    TEST_ASSERT_EQUAL_INT(out.trusted_name.offset, 0);
+    TEST_ASSERT_EQUAL_INT(out.address.size, 42);
+    TEST_ASSERT_EQUAL_INT(out.address.offset, 0);
+    // Absent optional fields are reset
+    TEST_ASSERT_NULL(out.nft_id.ptr);
+    TEST_ASSERT_EQUAL_INT(out.nft_id.size, 0);
+    TEST_ASSERT_EQUAL_INT(out.nft_id.offset, 0);
+    TEST_ASSERT_NULL(out.source_contract.ptr);
+    TEST_ASSERT_EQUAL_INT(out.source_contract.size, 0);
+    TEST_ASSERT_EQUAL_INT(out.source_contract.offset, 0);
+    TEST_ASSERT_EQUAL_INT(out.challenge, 0);
+    TEST_ASSERT_EQUAL_INT(out.blockchain_family, 0);
+    TEST_ASSERT_FALSE(out.nft_id_received);
+    TEST_ASSERT_FALSE(out.source_contract_received);
+    TEST_ASSERT_FALSE(out.challenge_received);
+    TEST_ASSERT_FALSE(out.not_valid_after_received);
+    TEST_ASSERT_FALSE(out.blockchain_family_received);
+
+    // NULL parameters are rejected
+    TEST_ASSERT_EQUAL_INT(tlv_use_case_trusted_name(&buf, NULL), TLV_TRUSTED_NAME_PARSING_ERROR);
+    TEST_ASSERT_EQUAL_INT(tlv_use_case_trusted_name(NULL, &out), TLV_TRUSTED_NAME_PARSING_ERROR);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Test: Valid trusted name v2 with optional fields                           */
 /* -------------------------------------------------------------------------- */
 
@@ -550,6 +605,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_valid_trusted_name_v1);
+    RUN_TEST(test_trusted_name_dirty_output);
     RUN_TEST(test_valid_trusted_name_v2_with_optionals);
     RUN_TEST(test_not_valid_after_3_bytes);
     RUN_TEST(test_not_valid_after_3_bytes_max);
