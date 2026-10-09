@@ -42,6 +42,11 @@ ledger_unit_tests_add_test(
 ledger_unit_tests_add_test(
     NAME            test_tlv_macros
     SOURCES         ${TLV_COMMON_SOURCES}
+                    ${SDK_DIR}/lib_standard_app/buffer.c
+                    ${SDK_DIR}/lib_standard_app/read.c
+                    ${SDK_DIR}/lib_standard_app/varint.c
+                    ${SDK_DIR}/lib_standard_app/write.c
+                    ${SDK_DIR}/lib_standard_app/bip32.c
     INCLUDE_DIRS    ${TLV_INCLUDE_DIRS}
     COMPILE_DEFS    ${TLV_COMPILE_DEFS}
     COMPILE_OPTIONS ${TLV_COMPILE_OPTIONS} -Wno-pedantic

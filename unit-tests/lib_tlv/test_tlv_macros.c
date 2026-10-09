@@ -439,6 +439,68 @@ void test_large_parser_tag_to_flag(void)
 }
 
 /* -------------------------------------------------------------------------- */
+/* Tests for buffer views given to the handlers                               */
+/* -------------------------------------------------------------------------- */
+
+typedef struct {
+    uint32_t calls;
+    bool     offsets_ok;
+    uint8_t  value_first;
+    uint8_t  raw_first;
+} views_output_t;
+
+static bool views_check(const tlv_data_t *data, views_output_t *ctx)
+{
+    ctx->calls++;
+    if ((data->value.offset != 0) || (data->raw.offset != 0)) {
+        ctx->offsets_ok = false;
+        return false;
+    }
+    // Consume the views directly with the standard reader, as a custom handler would
+    buffer_t value = data->value;
+    buffer_t raw   = data->raw;
+    return buffer_read_u8(&value, &ctx->value_first) && buffer_read_u8(&raw, &ctx->raw_first);
+}
+
+static bool views_common_handler(const tlv_data_t *data, void *out)
+{
+    return views_check(data, out);
+}
+
+static bool views_tag_handler(const tlv_data_t *data, void *out)
+{
+    return views_check(data, out);
+}
+
+#define VIEWS_TAGS(X) X(0x05, TAG_VIEWS, views_tag_handler, ENFORCE_UNIQUE_TAG)
+
+DEFINE_TLV_PARSER(VIEWS_TAGS, views_common_handler, views_parser)
+
+// Leave non-zero garbage on the stack, where the parser's locals will live
+static void __attribute__((noinline)) dirty_stack(void)
+{
+    volatile uint8_t junk[1024];
+    for (size_t i = 0; i < sizeof(junk); i++) {
+        junk[i] = 0xA5;
+    }
+}
+
+void test_handler_views_start_at_offset_zero(void)
+{
+    uint8_t         tlv[] = {0x05, 0x02, 0xAB, 0xCD};
+    buffer_t        buf   = {.ptr = tlv, .size = sizeof(tlv), .offset = 0};
+    views_output_t  out   = {.offsets_ok = true};
+    TLV_reception_t received;
+
+    dirty_stack();
+    TEST_ASSERT_TRUE(views_parser(&buf, &out, &received));
+    TEST_ASSERT_EQUAL_UINT32(2, out.calls);
+    TEST_ASSERT_TRUE(out.offsets_ok);
+    TEST_ASSERT_EQUAL_HEX8(0xAB, out.value_first);
+    TEST_ASSERT_EQUAL_HEX8(0x05, out.raw_first);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Test suite entry point                                                     */
 /* -------------------------------------------------------------------------- */
 
@@ -483,6 +545,9 @@ int main(void)
     RUN_TEST(test_flag_above_32bit_boundary);
     RUN_TEST(test_large_parser_flags_are_unique);
     RUN_TEST(test_large_parser_tag_to_flag);
+
+    /* Handler buffer views */
+    RUN_TEST(test_handler_views_start_at_offset_zero);
 
     return UNITY_END();
 }
