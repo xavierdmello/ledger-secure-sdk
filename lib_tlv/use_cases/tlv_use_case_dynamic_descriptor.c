@@ -137,9 +137,17 @@ static bool handle_common(const tlv_data_t *data, void *tlv_extracted_ptr)
 tlv_dynamic_descriptor_status_t tlv_use_case_dynamic_descriptor(const buffer_t *payload,
                                                                 tlv_dynamic_descriptor_out_t *out)
 {
+    if (payload == NULL || out == NULL) {
+        PRINTF("Received NULL parameter\n");
+        return TLV_DYNAMIC_DESCRIPTOR_PARSING_ERROR;
+    }
+
     // Parser output
     tlv_extracted_t tlv_extracted = {0};
     tlv_extracted.output          = out;
+
+    // Reset output, the caller is not required to pre-zero it
+    memset(out, 0, sizeof(*out));
 
     // The parser will fill it with the hash of the whole TLV payload (except SIGN tag)
     cx_sha256_init(&tlv_extracted.hash_ctx);
