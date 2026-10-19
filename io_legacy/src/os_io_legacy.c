@@ -212,7 +212,6 @@ unsigned int io_seph_is_status_sent(void)
 
 unsigned short io_seph_recv(unsigned char *buffer, unsigned short maxlength, unsigned int flags)
 {
-    UNUSED(maxlength);
     UNUSED(flags);
     int status = os_io_rx_evt(G_io_rx_buffer, sizeof(G_io_rx_buffer), NULL, true);
 
@@ -221,6 +220,11 @@ unsigned short io_seph_recv(unsigned char *buffer, unsigned short maxlength, uns
             case OS_IO_PACKET_TYPE_SE_EVT:
             case OS_IO_PACKET_TYPE_SEPH:
                 status -= 1;
+                // An event that does not fit the caller's buffer is dropped, not truncated
+                if ((buffer == NULL) || (status == 0) || (status > maxlength)) {
+                    status = 0;
+                    break;
+                }
                 memcpy(buffer, &G_io_rx_buffer[1], status);
                 if (G_io_rx_buffer[1] == SEPROXYHAL_TAG_ITC_EVENT) {
                     status = io_process_itc_ux_event(buffer, status);
@@ -231,8 +235,13 @@ unsigned short io_seph_recv(unsigned char *buffer, unsigned short maxlength, uns
                 }
                 break;
             default:
+                // Nothing was copied to the caller's buffer
+                status = 0;
                 break;
         }
+    }
+    if (status < 0) {
+        status = 0;
     }
 
     return status;
