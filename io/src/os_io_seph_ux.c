@@ -123,6 +123,9 @@ void io_seph_ux_init_button(void)
 {
     G_ux_os.button_mask              = 0;
     G_ux_os.button_same_mask_counter = 0;
+#ifdef HAVE_BAGL
+    G_ux_os.button_wait_release = 0;
+#endif  // HAVE_BAGL
 }
 
 int io_process_itc_ux_event(uint8_t *buffer_in, size_t buffer_in_length)
@@ -302,6 +305,15 @@ void io_seph_ux_display_bagl_element(const bagl_element_t *element)
 
 void io_seproxyhal_button_push(button_push_callback_t button_callback, unsigned int new_button_mask)
 {
+    // a new screen has been displayed while a button was held: ignore the gesture started on the
+    // previous screen, including its final release, which must not act on the new screen
+    if (G_ux_os.button_wait_release) {
+        if (new_button_mask == 0) {
+            io_seph_ux_init_button();
+        }
+        return;
+    }
+
     if (button_callback) {
         unsigned int button_mask;
         unsigned int button_same_mask_counter;
