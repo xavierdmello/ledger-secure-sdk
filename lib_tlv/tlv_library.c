@@ -326,7 +326,7 @@ bool get_buffer_from_tlv_data(const tlv_data_t *data,
         return false;
     }
     // Fully initialize the output, the caller is not required to pre-zero it
-    *out = (buffer_t) {
+    *out = (buffer_t){
         .ptr    = data->value.ptr,
         .size   = data->value.size,
         .offset = 0,
@@ -580,7 +580,7 @@ bool _parse_tlv_internal(const _internal_tlv_handler_t *handlers,
                 }
                 // Fully (re)build the views given to the handlers: they are exposed as regular
                 // buffer_t, so their offset must start at 0 for buffer_read_* to be correct
-                data.value = (buffer_t) {
+                data.value = (buffer_t){
                     .ptr    = (data.value.size > 0) ? &payload->ptr[offset] : NULL,
                     .size   = data.value.size,
                     .offset = 0,
@@ -598,7 +598,7 @@ bool _parse_tlv_internal(const _internal_tlv_handler_t *handlers,
                 offset += data.value.size;
 
                 // Calculate raw TLV start/end to give to the handler
-                data.raw = (buffer_t) {
+                data.raw = (buffer_t){
                     .ptr    = &payload->ptr[tag_start_offset],
                     .size   = offset - tag_start_offset,
                     .offset = 0,
