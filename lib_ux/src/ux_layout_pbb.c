@@ -49,8 +49,10 @@ const bagl_element_t ux_layout_pbb_elements[] = {
   {{BAGL_ICON                           , 0x02, 122,  12,   4,   7, 0, 0, 0        , 0xFFFFFF, 0x000000, 0, 0  }, .text=(const char*)&C_icon_right},
 
   {{BAGL_ICON                           , 0x0F,  16,   8,  16,  16, 0, 0, 0        , 0xFFFFFF, 0x000000, 0, 0  }, .text=NULL},
-  {{BAGL_LABELINE                       , 0x10,  41,  12, 128,  32, 0, 0, 0        , 0xFFFFFF, 0x000000, BAGL_FONT_OPEN_SANS_EXTRABOLD_11px, 0  }, .text=NULL},
-  {{BAGL_LABELINE                       , 0x11,  41,  26, 128,  32, 0, 0, 0        , 0xFFFFFF, 0x000000, BAGL_FONT_OPEN_SANS_EXTRABOLD_11px, 0  }, .text=NULL},
+  // text width must stop before the right icon (x=122), so that BAGL ellipsis
+  // decisions match what is actually visible on screen
+  {{BAGL_LABELINE                       , 0x10,  41,  12,  80,  32, 0, 0, 0        , 0xFFFFFF, 0x000000, BAGL_FONT_OPEN_SANS_EXTRABOLD_11px, 0  }, .text=NULL},
+  {{BAGL_LABELINE                       , 0x11,  41,  26,  80,  32, 0, 0, 0        , 0xFFFFFF, 0x000000, BAGL_FONT_OPEN_SANS_EXTRABOLD_11px, 0  }, .text=NULL},
 #else
   #error "BAGL_WIDTH/BAGL_HEIGHT not defined"
 #endif
