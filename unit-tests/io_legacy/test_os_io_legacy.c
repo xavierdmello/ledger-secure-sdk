@@ -3,8 +3,8 @@
  * command may reach the app, whatever transport it comes from, and a CTAPHID_CANCEL only
  * reaches a pending CTAP2 command.
  *
- * Built for the in-app IO stack (no USE_OS_IO_STACK), where a USB class can still read a reply
- * from the app's buffer after os_io_tx_cmd() returns.
+ * Built for the in-app IO stack (no USE_OS_IO_STACK), where a USB class or the BLE profile can
+ * still read a reply from the app's buffer after os_io_tx_cmd() returns.
  *
  * The source is included to reach its static state. The OS calls are fakes: one packet is
  * queued for os_io_rx_app_evt(), and os_io_tx_cmd() records what is sent.
@@ -84,6 +84,14 @@ static bool usb_busy;
 int32_t USBD_LEDGER_is_busy(void)
 {
     return usb_busy;
+}
+
+// Whether the BLE profile still reads a reply from the app's buffer.
+static bool ble_busy;
+
+bool BLE_LEDGER_is_busy(void)
+{
+    return ble_busy;
 }
 
 // Whether a PIN is set, and whether it was entered.
@@ -205,6 +213,7 @@ static void assert_pending_untouched(const uint8_t  *command,
 void setUp(void)
 {
     usb_busy           = false;
+    ble_busy           = false;
     pin_set            = BOLOS_FALSE;
     pin_validated      = BOLOS_TRUE;
     io_reply_in_flight = false;
@@ -441,6 +450,30 @@ void test_gate_stays_closed_until_usb_has_read_the_reply(void)
     TEST_ASSERT_EQUAL_INT(2, sent_count);
 }
 
+// Same over BLE: its next chunks are read from G_io_tx_buffer as the peer acks them.
+void test_gate_stays_closed_until_ble_has_read_the_reply(void)
+{
+    static const uint8_t reply[] = {0x01, 0x02, 0x03, 0x04, 0x90, 0x00};
+
+    receive(OS_IO_PACKET_TYPE_BLE_APDU, HID_APDU, sizeof(HID_APDU));
+    memcpy(G_io_tx_buffer, reply, sizeof(reply));
+    ble_busy = true;
+    io_legacy_apdu_tx(G_io_tx_buffer, sizeof(reply));
+    TEST_ASSERT_TRUE(os_io_reply_pending());
+
+    TEST_ASSERT_EQUAL_INT(0,
+                          receive(OS_IO_PACKET_TYPE_USB_HID_APDU, OTHER_APDU, sizeof(OTHER_APDU)));
+    TEST_ASSERT_EQUAL_UINT8(OS_IO_PACKET_TYPE_USB_HID_APDU, sent[1].type);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY_MESSAGE(reply, G_io_tx_buffer, sizeof(reply), "reply overwritten");
+
+    // The peer has acked the last chunk: the next command is taken.
+    ble_busy = false;
+    TEST_ASSERT_EQUAL_INT(sizeof(OTHER_APDU),
+                          receive(OS_IO_PACKET_TYPE_USB_HID_APDU, OTHER_APDU, sizeof(OTHER_APDU)));
+    TEST_ASSERT_TRUE(os_io_reply_pending());
+    TEST_ASSERT_EQUAL_INT(2, sent_count);
+}
+
 // The CTAP2 command is answered even if its reply is still being sent: it cannot be cancelled,
 // and another CTAP2 command still waits.
 void test_cbor_reply_in_flight_closes_cancel_but_not_the_gate(void)
@@ -595,6 +628,7 @@ int main(void)
     RUN_TEST(test_cdc_input_reaches_the_app_when_idle);
     RUN_TEST(test_cdc_input_while_locked_is_dropped);
     RUN_TEST(test_gate_stays_closed_until_usb_has_read_the_reply);
+    RUN_TEST(test_gate_stays_closed_until_ble_has_read_the_reply);
     RUN_TEST(test_cbor_reply_in_flight_closes_cancel_but_not_the_gate);
     RUN_TEST(test_usb_busy_without_pending_command_keeps_the_gate_open);
     RUN_TEST(test_reply_reopens_the_gate);

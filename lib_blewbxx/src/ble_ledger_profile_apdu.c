@@ -375,6 +375,10 @@ void BLE_LEDGER_PROFILE_apdu_connection_evt(ble_connection_t *connection, void *
     handle->transfer_mode_enabled = 0;
     handle->send_response         = false;
     handle->connection            = connection;
+    // A reply cut by a disconnection is never resumed.
+    handle->protocol_data.tx_apdu_buffer  = NULL;
+    handle->protocol_data.tx_chunk_length = 0;
+    handle->state                         = LEDGER_BLE_PROFILE_APDU_STATE_IDLE;
 }
 
 void BLE_LEDGER_PROFILE_apdu_connection_update_evt(ble_connection_t *connection, void *cookie)
@@ -701,8 +705,10 @@ ble_profile_status_t BLE_LEDGER_PROFILE_apdu_send_packet(const uint8_t *packet,
             if (result != LP_SUCCESS) {
                 goto error;
             }
-            handle->state = LEDGER_BLE_PROFILE_APDU_STATE_IDLE;
         }
+        // The next chunks are read from the caller's buffer, until the last one is acked.
+        handle->state = handle->protocol_data.tx_apdu_buffer ? LEDGER_BLE_PROFILE_APDU_BUSY
+                                                             : LEDGER_BLE_PROFILE_APDU_STATE_IDLE;
         handle->send_response = false;
 
         if (handle->wait_write_resp_ack == 0) {
@@ -723,7 +729,9 @@ bool BLE_LEDGER_PROFILE_apdu_is_busy(void *cookie)
     ledger_ble_profile_apdu_handle_t *handle = (ledger_ble_profile_apdu_handle_t *) PIC(cookie);
     bool                              busy   = false;
 
-    if (handle->state == LEDGER_BLE_PROFILE_APDU_BUSY) {
+    // No chunk is sent once disconnected: the reply is dropped, not pending.
+    if ((handle->state == LEDGER_BLE_PROFILE_APDU_BUSY) && handle->connection
+        && (handle->connection->connection_handle != 0xFFFF)) {
         busy = true;
     }
 
