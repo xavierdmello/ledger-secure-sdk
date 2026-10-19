@@ -519,11 +519,14 @@ int io_legacy_apdu_rx(uint8_t handle_ux_events)
                 break;
             case OS_IO_PACKET_TYPE_AT_CMD:
                 // G_io_apdu_buffer may hold a command awaiting its reply: CDC input is dropped
-                // meanwhile.
-                if (os_io_reply_pending()) {
+                // meanwhile. Like any command, it must not reach the app while locked either.
+                if (os_io_reply_pending()
+                    || (os_perso_is_pin_set() == BOLOS_TRUE
+                        && os_global_pin_is_validated() != BOLOS_TRUE)) {
                     status = 0;
                     break;
                 }
+                status -= 1;
                 memmove(G_io_apdu_buffer, &G_io_rx_buffer[1], status);
                 break;
 
