@@ -83,14 +83,18 @@ int32_t USBD_LEDGER_is_busy(void)
     return usb_busy;
 }
 
+// Whether a PIN is set, and whether it was entered.
+static bolos_bool_t pin_set;
+static bolos_bool_t pin_validated;
+
 bolos_bool_t os_perso_is_pin_set(void)
 {
-    return BOLOS_FALSE;
+    return pin_set;
 }
 
 bolos_bool_t os_global_pin_is_validated(void)
 {
-    return BOLOS_TRUE;
+    return pin_validated;
 }
 
 bolos_err_t os_io_handle_default_apdu(uint8_t                  *buffer_in,
@@ -189,6 +193,8 @@ static void assert_pending_untouched(const uint8_t  *command,
 void setUp(void)
 {
     usb_busy           = false;
+    pin_set            = BOLOS_FALSE;
+    pin_validated      = BOLOS_TRUE;
     io_reply_in_flight = false;
     os_io_set_reply_pending(false);
     io_os_legacy_apdu_type = APDU_TYPE_NONE;
@@ -369,10 +375,30 @@ void test_cdc_input_reaches_the_app_when_idle(void)
 {
     static const uint8_t at_cmd[] = {'A', 'T', '+', 'X'};
 
-    TEST_ASSERT_GREATER_THAN_INT(0, receive(OS_IO_PACKET_TYPE_AT_CMD, at_cmd, sizeof(at_cmd)));
+    TEST_ASSERT_EQUAL_INT(sizeof(at_cmd),
+                          receive(OS_IO_PACKET_TYPE_AT_CMD, at_cmd, sizeof(at_cmd)));
     TEST_ASSERT_EQUAL_HEX8_ARRAY(at_cmd, G_io_apdu_buffer, sizeof(at_cmd));
     TEST_ASSERT_FALSE(os_io_reply_pending());
     TEST_ASSERT_EQUAL_INT(0, sent_count);
+}
+
+// USB CDC input must not reach the app while the device is locked, as no APDU may.
+void test_cdc_input_while_locked_is_dropped(void)
+{
+    static const uint8_t at_cmd[] = {'A', 'T', '+', 'X'};
+
+    memset(G_io_apdu_buffer, 0, sizeof(at_cmd));
+    pin_set       = BOLOS_TRUE;
+    pin_validated = BOLOS_FALSE;
+
+    TEST_ASSERT_EQUAL_INT(0, receive(OS_IO_PACKET_TYPE_AT_CMD, OTHER_APDU, sizeof(OTHER_APDU)));
+    TEST_ASSERT_EACH_EQUAL_HEX8(0, G_io_apdu_buffer, sizeof(OTHER_APDU));
+    TEST_ASSERT_FALSE(os_io_reply_pending());
+    TEST_ASSERT_EQUAL_INT(0, sent_count);
+
+    pin_validated = BOLOS_TRUE;
+    TEST_ASSERT_EQUAL_INT(sizeof(at_cmd),
+                          receive(OS_IO_PACKET_TYPE_AT_CMD, at_cmd, sizeof(at_cmd)));
 }
 
 // os_io_tx_cmd() returned, but USB still sends the reply from G_io_tx_buffer: a command from
@@ -458,6 +484,7 @@ int main(void)
     RUN_TEST(test_received_raw_packet_is_ignored);
     RUN_TEST(test_cdc_input_during_review_is_dropped);
     RUN_TEST(test_cdc_input_reaches_the_app_when_idle);
+    RUN_TEST(test_cdc_input_while_locked_is_dropped);
     RUN_TEST(test_gate_stays_closed_until_usb_has_read_the_reply);
     RUN_TEST(test_cbor_reply_in_flight_closes_cancel_but_not_the_gate);
     RUN_TEST(test_usb_busy_without_pending_command_keeps_the_gate_open);
