@@ -24,14 +24,18 @@
 #include "unity.h"
 #include "Mockio.h"
 
-bool is_printable_string(const char *str, size_t len)
+bool is_displayable_string(const char *str, size_t len)
 {
+    bool has_visible = false;
     for (size_t i = 0; i < len; i++) {
         if (!isprint((unsigned char) str[i])) {
             return false;
         }
+        if (isgraph((unsigned char) str[i])) {
+            has_visible = true;
+        }
     }
-    return true;
+    return has_visible;
 }
 
 #include "address_book_common.h"
@@ -226,6 +230,31 @@ static void test_printable_string_embedded_null_rejected(void)
     TEST_ASSERT_FALSE(address_book_handle_printable_string(&data, out, sizeof(out)));
 }
 
+static void test_printable_string_single_space_rejected(void)
+{
+    tlv_data_t data                     = make_tlv((const uint8_t *) " ", 1);
+    char       out[CONTACT_NAME_LENGTH] = {0};
+    TEST_ASSERT_FALSE(address_book_handle_printable_string(&data, out, sizeof(out)));
+}
+
+static void test_printable_string_all_spaces_max_length_rejected(void)
+{
+    uint8_t bytes[CONTACT_NAME_LENGTH - 1];
+    memset(bytes, ' ', sizeof(bytes));
+    tlv_data_t data                     = make_tlv(bytes, sizeof(bytes));
+    char       out[CONTACT_NAME_LENGTH] = {0};
+    TEST_ASSERT_FALSE(address_book_handle_printable_string(&data, out, sizeof(out)));
+}
+
+static void test_printable_string_surrounding_spaces_accepted(void)
+{
+    const char *str                      = "  Bob  ";
+    tlv_data_t  data                     = make_tlv((const uint8_t *) str, strlen(str));
+    char        out[CONTACT_NAME_LENGTH] = {0};
+    TEST_ASSERT_TRUE(address_book_handle_printable_string(&data, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_STRING("  Bob  ", out);
+}
+
 /* ── address_book_handle_derivation_path ─────────────────────────────────── */
 
 /* Build the BIP32 path wire format: [length_byte, comp0_be32, ..., compN_be32] */
@@ -327,6 +356,9 @@ int main(void)
     RUN_TEST(test_printable_string_non_printable);
     RUN_TEST(test_printable_string_tab_rejected);
     RUN_TEST(test_printable_string_embedded_null_rejected);
+    RUN_TEST(test_printable_string_single_space_rejected);
+    RUN_TEST(test_printable_string_all_spaces_max_length_rejected);
+    RUN_TEST(test_printable_string_surrounding_spaces_accepted);
 
     /* derivation_path */
     RUN_TEST(test_derivation_path_valid_5_components);
