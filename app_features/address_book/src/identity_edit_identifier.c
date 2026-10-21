@@ -412,7 +412,10 @@ static void review_choice(bool confirm)
 static void ui_display(void)
 {
     memset(&g_ab_ui.list, 0, sizeof(g_ab_ui.list));
-    g_ab_ui.list.nbPairs  = 4;  // name + scope + old identifier + new identifier
+    g_ab_ui.list.nbPairs = 4;  // name + scope + old identifier + new identifier
+    if (g_ab_payload.edit_identifier.identity.blockchain_family == FAMILY_ETHEREUM) {
+        g_ab_ui.list.nbPairs++;  // network
+    }
     g_ab_ui.list.callback = get_edit_identifier_tagValue;
     address_book_display_review(&LARGE_ADDRESS_BOOK_ICON,
                                 "Review change to contact details",
