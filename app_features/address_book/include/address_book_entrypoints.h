@@ -117,6 +117,7 @@ bool handle_check_edit_identifier(const edit_identifier_t *params);
  *  - index 1: "Old address"  → old identifier (hex)
  *  - index 2: "New address"  → new identifier (hex)
  *  - index 3: "Scope"        → contact scope (if non-empty)
+ *  - index 4: "Network"      → network of identity.chain_id (Ethereum family only, mandatory)
  * Return NULL for out-of-range indices.
  *
  * @param[in] pairIndex Index of the tag-value pair to retrieve (0-based).
