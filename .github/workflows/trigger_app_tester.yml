@@ -1,0 +1,24 @@
+name: Build, scan and test apps on SDK tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  trigger_app_tester:
+    name: Trigger ledger-app-tester on ${{ github.ref_name }}
+    # Only from the dev repository, not from the public mirror
+    if: vars.APP_REPO_SUFFIX != '' && endsWith(github.repository, vars.APP_REPO_SUFFIX)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Build, Scan and Test Apps
+        env:
+          GH_TOKEN: ${{ secrets.CI_BOT_TOKEN }}
+          SDK_TAG: ${{ github.ref_name }}
+        run: |
+          gh workflow run build_all.yml -R LedgerHQ/ledger-app-tester -f sdk_reference="$SDK_TAG" -f send_to_slack=true
+          gh workflow run scan_all.yml -R LedgerHQ/ledger-app-tester -f sdk_reference="$SDK_TAG" -f send_to_slack=true
+          gh workflow run test_all.yml -R LedgerHQ/ledger-app-tester -f sdk_reference="$SDK_TAG" -f send_to_slack=true -f golden_run=true
+          gh workflow run self_hosted_swap_all.yml -R LedgerHQ/ledger-app-tester -f sdk_reference="$SDK_TAG" -f send_to_slack=true -f golden_run=true
+          gh workflow run legacy_swap_all.yml -R LedgerHQ/ledger-app-tester -f sdk_reference="$SDK_TAG" -f send_to_slack=true -f golden_run=true
