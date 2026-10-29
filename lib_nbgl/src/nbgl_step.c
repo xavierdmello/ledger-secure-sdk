@@ -10,6 +10,7 @@
 #include <string.h>
 #include "nbgl_debug.h"
 #include "nbgl_step.h"
+#include "nbgl_layout_internal_nanos.h"
 #include "glyphs.h"
 #include "os_pic.h"
 #include "os_print.h"
@@ -42,8 +43,9 @@ typedef enum {
  * definition of context for a @ref TEXT_STEP or @ref CENTERED_INFO_STEP step
  */
 typedef struct TextContext_s {
-    uint8_t     nbPages;        ///< number of pages for this text step
-    uint8_t     currentPage;    ///< current page for this text step
+    uint16_t nbPages;  ///< number of pages for this text step (a page contains at least one byte
+                       ///< and text lengths are 16 bits, so it cannot overflow)
+    uint16_t    currentPage;    ///< current page for this text step
     const char *txtStart;       ///< pointer on the start point of text (first page)
     const char *nextPageStart;  ///< pointer on the start point of text at the next page
     const char *subTxtStart;    ///< pointer on the start point of sub-text (first page)
@@ -152,9 +154,9 @@ static StepContext_t *getContextFromLayout(nbgl_layout_t layout)
 }
 
 // from the current details context, return a pointer on the details at the given page
-static const char *getTextPageAt(StepContext_t *ctx, uint8_t textPage)
+static const char *getTextPageAt(StepContext_t *ctx, uint16_t textPage)
 {
-    uint8_t     page        = 0;
+    uint16_t    page        = 0;
     const char *currentChar = ctx->textContext.txtStart;
     while (page < textPage) {
         if (page < (ctx->textContext.nbPages - 1)) {
@@ -172,21 +174,39 @@ static const char *getTextPageAt(StepContext_t *ctx, uint8_t textPage)
     return currentChar;
 }
 
-// from the current details context, return a pointer on the details at the given page, for subText
-static const char *getSubTextPageAt(StepContext_t *ctx, uint8_t textPage)
+// from the current details context, return the number of bytes of the given subText displayed in
+// a page
+static uint16_t getSubTextPageLen(StepContext_t *ctx, const char *subText)
 {
-    uint8_t     page        = 0;
+    uint16_t len = 0;
+    if (ctx->textContext.style == BUTTON_INFO) {
+        // use exactly the same split as the buttons drawn by the layout
+        uint8_t row = 0;
+        while ((row < NB_MAX_BUTTON_ROWS) && (subText[len] != '\0')) {
+            uint16_t rowLen, rowWidth;
+            len += layoutGetButtonRowLen(&subText[len], &rowLen, &rowWidth);
+            row++;
+        }
+    }
+    else {
+        nbgl_getTextMaxLenInNbLines(BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp,
+                                    subText,
+                                    AVAILABLE_WIDTH,
+                                    NB_MAX_LINES - 1,
+                                    &len,
+                                    true);
+    }
+    return len;
+}
+
+// from the current details context, return a pointer on the details at the given page, for subText
+static const char *getSubTextPageAt(StepContext_t *ctx, uint16_t textPage)
+{
+    uint16_t    page        = 0;
     const char *currentChar = ctx->textContext.subTxtStart;
     while (page < textPage) {
         if (page < (ctx->textContext.nbPages - 1)) {
-            uint16_t len;
-            nbgl_getTextMaxLenInNbLines(BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp,
-                                        currentChar,
-                                        AVAILABLE_WIDTH,
-                                        NB_MAX_LINES - 1,
-                                        &len,
-                                        true);
-            currentChar = currentChar + len;
+            currentChar = currentChar + getSubTextPageLen(ctx, currentChar);
         }
         page++;
     }
@@ -195,8 +215,8 @@ static const char *getSubTextPageAt(StepContext_t *ctx, uint8_t textPage)
 
 // utility function to compute navigation arrows
 static nbgl_layoutNavIndication_t getNavigationInfo(nbgl_stepPosition_t pos,
-                                                    uint8_t             nbPages,
-                                                    uint8_t             currentPage)
+                                                    uint16_t            nbPages,
+                                                    uint16_t            currentPage)
 {
     nbgl_layoutNavIndication_t indication = NO_ARROWS;
 
@@ -221,7 +241,7 @@ static nbgl_layoutNavIndication_t getNavigationInfo(nbgl_stepPosition_t pos,
 }
 
 // function used to display the current page in details review mode
-static void displayTextPage(StepContext_t *ctx, uint8_t textPage)
+static void displayTextPage(StepContext_t *ctx, uint16_t textPage)
 {
     const char *txt;
     char        intermediateString[36];  // a bit bigger but we know that one line cannot contain
@@ -245,14 +265,23 @@ static void displayTextPage(StepContext_t *ctx, uint8_t textPage)
 
     if (ctx->textContext.currentPage < (ctx->textContext.nbPages - 1)) {
         uint16_t len;
-        uint8_t  nbLines
-            = (ctx->textContext.subTxtStart == NULL) ? NB_MAX_LINES : (NB_MAX_LINES - 1);
-        nbgl_getTextMaxLenInNbLines(
-            BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp, txt, AVAILABLE_WIDTH, nbLines, &len, true);
+        if (ctx->textContext.subTxtStart == NULL) {
+            nbgl_getTextMaxLenInNbLines(BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp,
+                                        txt,
+                                        AVAILABLE_WIDTH,
+                                        NB_MAX_LINES,
+                                        &len,
+                                        true);
+        }
+        else {
+            len = getSubTextPageLen(ctx, txt);
+        }
         // memorize next position to save processing
         ctx->textContext.nextPageStart = txt + len;
         // if the next char is '\n', skip it to avoid starting with an empty line
-        if (*ctx->textContext.nextPageStart == '\n') {
+        // (not for the buttons of subText, for which getSubTextPageLen() already handles '\n')
+        if (((ctx->textContext.subTxtStart == NULL) || (ctx->textContext.style != BUTTON_INFO))
+            && (*ctx->textContext.nextPageStart == '\n')) {
             ctx->textContext.nextPageStart++;
         }
     }
@@ -309,8 +338,8 @@ static void displayTextPage(StepContext_t *ctx, uint8_t textPage)
             SPRINTF(intermediateString,
                     "%s (%d/%d)",
                     ctx->textContext.txtStart,
-                    ctx->textContext.currentPage + 1,
-                    ctx->textContext.nbPages);
+                    (int) (ctx->textContext.currentPage + 1),
+                    (int) ctx->textContext.nbPages);
             // truncate title to fit in one line, if necessary
             if (nbgl_getTextNbLinesInWidth(BAGL_FONT_OPEN_SANS_EXTRABOLD_11px_1bpp,
                                            intermediateString,
@@ -330,7 +359,9 @@ static void displayTextPage(StepContext_t *ctx, uint8_t textPage)
                 ctx->textContext.tmpString[TMP_STRING_MAX_LEN - 1] = 0;
             }
         }
-        nbgl_layoutAddText(ctx->layout, ctx->textContext.tmpString, txt, ctx->textContext.style);
+        // the text of the current page fills the buttons, the remaining text is displayed in the
+        // next pages, so no ellipsis
+        layoutAddText(ctx->layout, ctx->textContext.tmpString, txt, ctx->textContext.style, false);
     }
     if (navInfo.indication != NO_ARROWS) {
         nbgl_layoutAddNavigation(ctx->layout, &navInfo);
@@ -477,6 +508,8 @@ nbgl_step_t nbgl_stepDrawText(nbgl_stepPosition_t               pos,
     }
     // initialize context (already set to 0 by getFreeContext())
     ctx->textContext.onActionCallback = onActionCallback;
+    // style is needed to compute the number of pages of subText
+    ctx->textContext.style = style;
     if (ticker) {
         ctx->ticker.tickerCallback  = ticker->tickerCallback;
         ctx->ticker.tickerIntervale = ticker->tickerIntervale;
@@ -518,26 +551,43 @@ nbgl_step_t nbgl_stepDrawText(nbgl_stepPosition_t               pos,
                            last_nb_pages,
                            last_bold_state);
 #endif  // BUILD_SCREENSHOTS
-        // NB_MAX_LINES-1 because first line is for main text
-        ctx->textContext.nbPages = nbgl_getTextNbPagesInWidth(
-            BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp, subText, NB_MAX_LINES - 1, AVAILABLE_WIDTH);
+        if (style == BUTTON_INFO) {
+            // count the pages with exactly the same split as the one used to display them. Each
+            // page contains at least one char, so all the text is always reachable
+            const char *pageStart = subText;
+            do {
+                pageStart += getSubTextPageLen(ctx, pageStart);
+                ctx->textContext.nbPages++;
+            } while (*pageStart != '\0');
+#ifdef BUILD_SCREENSHOTS
+            // Call this function to get correct nb_lines for subText
+            nbgl_getTextNbPagesInWidth(
+                BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp, subText, NB_MAX_LINES - 1, AVAILABLE_WIDTH);
+#endif  // BUILD_SCREENSHOTS
+        }
+        else {
+            // NB_MAX_LINES-1 because first line is for main text
+            ctx->textContext.nbPages = nbgl_getTextNbPagesInWidth(
+                BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp, subText, NB_MAX_LINES - 1, AVAILABLE_WIDTH);
+        }
 #ifdef BUILD_SCREENSHOTS
         area.height = (NB_MAX_LINES - nb_lines_title)
                       * nbgl_getFontLineHeight(BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp);
         // If subTxtid is not valid, we'll use txtId for nb_lines/nb_pages values
+        // (in BUTTON_INFO style, the pages are the ones really displayed)
         store_string_infos(subText,
                            BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp,
                            &area,
                            true,
                            last_nb_lines,
-                           last_nb_pages,
+                           (style == BUTTON_INFO) ? ctx->textContext.nbPages : last_nb_pages,
                            last_bold_state);
 #endif  // BUILD_SCREENSHOTS
     }
     LOG_DEBUG(STEP_LOGGER,
               "nbgl_stepDrawText: ctx = %p, nbPages = %d, pos = 0x%X\n",
               ctx,
-              ctx->textContext.nbPages,
+              (int) ctx->textContext.nbPages,
               pos);
     if (pos & BACKWARD_DIRECTION) {
         // start with last page
@@ -548,7 +598,6 @@ nbgl_step_t nbgl_stepDrawText(nbgl_stepPosition_t               pos,
     // keep only direction part of position
     ctx->textContext.pos               = pos & STEP_POSITION_MASK;
     ctx->textContext.actionOnAnyButton = (pos & ACTION_ON_ANY_BUTTON) != 0;
-    ctx->textContext.style             = style;
     displayTextPage(ctx, ctx->textContext.currentPage);
 
     return (nbgl_step_t) ctx;

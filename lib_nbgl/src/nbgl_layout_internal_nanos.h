@@ -26,6 +26,25 @@ extern "C" {
  */
 #define LAYOUT_OBJ_POOL_LEN 10
 
+/**
+ * @brief Horizontal margin (sum of left and right) between the text of a button and its border
+ *
+ */
+#define BUTTON_MARGIN_Y 12
+
+/**
+ * @brief Maximum number of buttons used to display the sub text in @ref BUTTON_INFO style
+ *
+ */
+#define NB_MAX_BUTTON_ROWS 3
+
+/**
+ * @brief Maximum number of bytes (including '\0') of the text of a button in @ref BUTTON_INFO
+ * style. A row of narrow chars is cut at this length, the rest goes in the next button
+ *
+ */
+#define NB_MAX_CHAR_IN_BUTTON_ROW 20
+
 /**********************
  *      TYPEDEFS
  **********************/
@@ -43,12 +62,22 @@ typedef struct nbgl_layoutInternal_s {
     nbgl_obj_t **children;    ///< children for main screen
 
     nbgl_layoutButtonCallback_t callback;  // user callback for all controls
+    char
+        buttonTexts[NB_MAX_BUTTON_ROWS]
+                   [NB_MAX_CHAR_IN_BUTTON_ROW];  ///< texts of the buttons in @ref BUTTON_INFO
+                                                 ///< style, kept as long as the layout is displayed
 } nbgl_layoutInternal_t;
 
 /**********************
  * GLOBAL PROTOTYPES
  **********************/
-void layoutAddObject(nbgl_layoutInternal_t *layout, nbgl_obj_t *obj);
+void     layoutAddObject(nbgl_layoutInternal_t *layout, nbgl_obj_t *obj);
+uint16_t layoutGetButtonRowLen(const char *text, uint16_t *len, uint16_t *width);
+int      layoutAddText(nbgl_layout_t                  *layout,
+                       const char                     *text,
+                       const char                     *subText,
+                       nbgl_contentCenteredInfoStyle_t style,
+                       bool                            ellipsis);
 
 /**********************
  *      MACROS
