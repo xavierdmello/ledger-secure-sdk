@@ -36,6 +36,7 @@ const nbgl_icon_details_t C_Chevron_40px;
 const nbgl_icon_details_t C_Denied_Circle_64px;
 const nbgl_icon_details_t C_Important_Circle_64px;
 const nbgl_icon_details_t C_Info_40px;
+const nbgl_icon_details_t C_Mini_Push_40px;
 const nbgl_icon_details_t C_Privacy_40px;
 const nbgl_icon_details_t C_QRCode_40px;
 const nbgl_icon_details_t C_Search_40px;

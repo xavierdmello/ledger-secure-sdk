@@ -2191,6 +2191,8 @@ int nbgl_layoutAddTagValueList(nbgl_layout_t *layout, const nbgl_layoutTagValueL
         else {
             valueTextArea->fontId = LARGE_MEDIUM_FONT;
         }
+        // the width of value must match the one used in getNbTagValuesInPage() (nbgl_use_case.c)
+        // to compute the number of pairs fitting in a page
         if ((pair->aliasValue == 0) && (pair->valueIcon == NULL)) {
             valueTextArea->obj.area.width = AVAILABLE_WIDTH;
         }
@@ -2219,12 +2221,6 @@ int nbgl_layoutAddTagValueList(nbgl_layout_t *layout, const nbgl_layoutTagValueL
             nbLines                          = list->nbMaxLinesForValue;
             valueTextArea->nbMaxLines        = list->nbMaxLinesForValue;
             valueTextArea->hideEndOfLastLine = list->hideEndOfLastLine;
-        }
-        // alias values (named addresses): always cap at 2 lines with ellipsis
-        if (pair->aliasValue && (nbLines > 2)) {
-            nbLines                          = 2;
-            valueTextArea->nbMaxLines        = 2;
-            valueTextArea->hideEndOfLastLine = true;
         }
         const nbgl_font_t *font                    = nbgl_getFont(valueTextArea->fontId);
         valueTextArea->obj.area.height             = nbLines * font->line_height;

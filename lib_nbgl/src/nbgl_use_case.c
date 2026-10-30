@@ -2234,9 +2234,19 @@ static uint8_t getNbTagValuesInPage(uint8_t                           nbPairs,
         else {
             value_font = LARGE_MEDIUM_FONT;
         }
+        // a value with an icon on its right (the (>) icon for an alias) has a reduced width, as
+        // in nbgl_layoutAddTagValueList()
+        uint16_t valueWidth = AVAILABLE_WIDTH;
+        if (pair->aliasValue) {
+            valueWidth -= MINI_PUSH_ICON.width + VALUE_ICON_INTERVALE;
+        }
+        else if (pair->valueIcon != NULL) {
+            valueWidth -= ((const nbgl_icon_details_t *) PIC(pair->valueIcon))->width
+                          + VALUE_ICON_INTERVALE;
+        }
         // nb lines for value
         nbLines = nbgl_getTextNbLinesInWidth(
-            value_font, pair->value, AVAILABLE_WIDTH, tagValueList->wrapping);
+            value_font, pair->value, valueWidth, tagValueList->wrapping);
         // honor list-level nbMaxLinesForValue: when set, the value will be
         // displayed truncated to that many lines, so account for its
         // truncated height rather than its full height.
@@ -2258,7 +2268,7 @@ static uint8_t getNbTagValuesInPage(uint8_t                           nbPairs,
         }
         else {
             currentHeight += nbgl_getTextHeightInWidth(
-                value_font, pair->value, AVAILABLE_WIDTH, tagValueList->wrapping);
+                value_font, pair->value, valueWidth, tagValueList->wrapping);
         }
 
         // potential subAlias text
