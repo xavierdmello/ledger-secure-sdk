@@ -2153,9 +2153,11 @@ int nbgl_layoutAddTagValueList(nbgl_layout_t *layout, const nbgl_layoutTagValueL
 
         container = (nbgl_container_t *) nbgl_objPoolGet(CONTAINER, layoutInt->layer);
 
+        // (>) icon for an alias, otherwise the provided icon, if any
+        valueIcon = layoutGetTagValueIcon(pair);
+
         // tune container number of children (max 4 if a valueIcon and aliasSubName)
-        // aliasValue also adds an icon (MINI_PUSH_ICON), so count it the same way
-        if ((pair->valueIcon != NULL) || pair->aliasValue) {
+        if (valueIcon != NULL) {
             nbChildren++;
             // if it's a alias with a subName, add a child
             if ((pair->aliasValue) && (pair->extension != NULL)
@@ -2187,42 +2189,26 @@ int nbgl_layoutAddTagValueList(nbgl_layout_t *layout, const nbgl_layoutTagValueL
         valueTextArea->textColor     = BLACK;
         valueTextArea->text          = PIC(pair->value);
         valueTextArea->textAlignment = MID_LEFT;
-        if (list->smallCaseForValue) {
-            valueTextArea->fontId = SMALL_BOLD_FONT;
-        }
-        else {
-            valueTextArea->fontId = LARGE_MEDIUM_FONT;
-        }
-        // the width of value must match the one used in getNbTagValuesInPage() (nbgl_use_case.c)
-        // to compute the number of pairs fitting in a page
-        if ((pair->aliasValue == 0) && (pair->valueIcon == NULL)) {
-            valueTextArea->obj.area.width = AVAILABLE_WIDTH;
-        }
-        else {
-            if (pair->aliasValue) {
-                // if the value is an alias, we automatically display a (>) icon
-                valueIcon = &MINI_PUSH_ICON;
-            }
-            else {
-                // otherwise use the provided icon
-                valueIcon = PIC(pair->valueIcon);
-            }
-            // decrease the available width for value text
-            valueTextArea->obj.area.width
-                = AVAILABLE_WIDTH - valueIcon->width - VALUE_ICON_INTERVALE;
-        }
+        // the font must match the one used in getNbTagValuesInPage() (nbgl_use_case.c)
+        valueTextArea->fontId = layoutGetTagValueFont(list->smallCaseForValue);
+        // the width of value (reduced if there is an icon) must match the one used in
+        // getNbTagValuesInPage() (nbgl_use_case.c) to compute the number of pairs fitting in a page
+        valueTextArea->obj.area.width = layoutGetTagValueWidth(valueIcon);
 
-        // handle the nbMaxLinesForValue parameter, used to automatically keep only
-        // nbMaxLinesForValue lines
+        // handle the nbMaxLinesForValue parameters of the list and of the pair, used to
+        // automatically keep only this number of lines
+        bool    forceEllipsis;
+        uint8_t nbMaxLines
+            = layoutGetTagValueMaxLines(list->nbMaxLinesForValue, pair, &forceEllipsis);
         uint16_t nbLines = nbgl_getTextNbLinesInWidth(valueTextArea->fontId,
                                                       valueTextArea->text,
                                                       valueTextArea->obj.area.width,
                                                       list->wrapping);
-        // use this nbMaxLinesForValue parameter only if >0
-        if ((list->nbMaxLinesForValue > 0) && (nbLines > list->nbMaxLinesForValue)) {
-            nbLines                          = list->nbMaxLinesForValue;
-            valueTextArea->nbMaxLines        = list->nbMaxLinesForValue;
-            valueTextArea->hideEndOfLastLine = list->hideEndOfLastLine;
+        // use this nbMaxLines only if >0
+        if ((nbMaxLines > 0) && (nbLines > nbMaxLines)) {
+            nbLines                          = nbMaxLines;
+            valueTextArea->nbMaxLines        = nbMaxLines;
+            valueTextArea->hideEndOfLastLine = forceEllipsis || list->hideEndOfLastLine;
         }
         const nbgl_font_t *font                    = nbgl_getFont(valueTextArea->fontId);
         valueTextArea->obj.area.height             = nbLines * font->line_height;
