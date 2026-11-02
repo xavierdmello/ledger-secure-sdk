@@ -12,6 +12,8 @@ extern "C" {
 #endif
 
 #include "nbgl_layout.h"
+#include "glyphs.h"
+#include "os_pic.h"
 
 /*********************
  *      INCLUDES
@@ -129,6 +131,81 @@ bool layoutNavigationCallback(nbgl_obj_t      *obj,
                               nbgl_touchType_t eventType,
                               uint8_t          nbPages,
                               uint8_t         *activePage);
+
+/**********************
+ *  INLINE FUNCTIONS
+ **********************/
+
+/**
+ * @brief returns the font used to display the values of a list of tag/value pairs
+ *
+ * @param smallCaseForValue smallCaseForValue field of the list
+ * @return the font of the values
+ */
+static inline nbgl_font_id_e layoutGetTagValueFont(bool smallCaseForValue)
+{
+    return smallCaseForValue ? SMALL_BOLD_FONT : LARGE_MEDIUM_FONT;
+}
+
+/**
+ * @brief returns the icon displayed on the right of the value of the given tag/value pair
+ *
+ * @param pair tag/value pair
+ * @return the (>) icon for an alias, otherwise the icon of the pair (NULL if none)
+ */
+static inline const nbgl_icon_details_t *layoutGetTagValueIcon(const nbgl_contentTagValue_t *pair)
+{
+    // valueIcon is in a union with extension, so aliasValue must be checked first
+    if (pair->aliasValue) {
+        // the (>) icon is automatically displayed for an alias
+        return &MINI_PUSH_ICON;
+    }
+    if (pair->valueIcon != NULL) {
+        return (const nbgl_icon_details_t *) PIC(pair->valueIcon);
+    }
+    return NULL;
+}
+
+/**
+ * @brief returns the width of the value of a tag/value pair. Shared by the layout and the use
+ * cases, so that the number of lines used to compute the number of pairs fitting in a page is
+ * always the one really displayed
+ *
+ * @param icon icon on the right of the value, as returned by @ref layoutGetTagValueIcon()
+ * @return the width in pixels of the value
+ */
+static inline uint16_t layoutGetTagValueWidth(const nbgl_icon_details_t *icon)
+{
+    // a value with an icon on its right has a reduced width
+    if (icon != NULL) {
+        return AVAILABLE_WIDTH - icon->width - VALUE_ICON_INTERVALE;
+    }
+    return AVAILABLE_WIDTH;
+}
+
+/**
+ * @brief returns the max number of lines of the value of the given tag/value pair, which is the
+ * smallest non-zero of the list one and the pair one
+ *
+ * @param listMaxLines max number of lines for all values of the list (0 if not limited)
+ * @param pair tag/value pair
+ * @param forceEllipsis [out] if not NULL, set to true if the pair has a max number of lines, in
+ * which case the last line must end with "..." if the value doesn't fit, whichever limit cuts it
+ * @return the max number of lines (0 if not limited)
+ */
+static inline uint8_t layoutGetTagValueMaxLines(uint8_t                       listMaxLines,
+                                                const nbgl_contentTagValue_t *pair,
+                                                bool                         *forceEllipsis)
+{
+    if (forceEllipsis != NULL) {
+        *forceEllipsis = (pair->nbMaxLinesForValue > 0);
+    }
+    if ((pair->nbMaxLinesForValue > 0)
+        && ((listMaxLines == 0) || (pair->nbMaxLinesForValue < listMaxLines))) {
+        return pair->nbMaxLinesForValue;
+    }
+    return listMaxLines;
+}
 
 /**********************
  *      MACROS

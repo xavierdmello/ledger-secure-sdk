@@ -587,6 +587,17 @@ void startReview(void) {
 }
 @endcode
 
+By default, a value is fully displayed, in as many pages as necessary. The *nbMaxLinesForValue*
+field of a tag/value pair can instead limit its value to a single page of 1 to 3 lines (or buttons
+for an alias): if the value doesn't fit, it is cut and its last line ends with "...", so it's up to
+the app to make sure the user doesn't need the rest of it (for example with an alias).
+
+@code
+  pairs[1].item               = "To";
+  pairs[1].value              = "My savings account with a very long name";
+  pairs[1].nbMaxLinesForValue = 2;  // at most 2 lines, ending with "..." if it doesn't fit
+@endcode
+
 @subsection use_case_review_light Light review Use Case
 
 Not really useful on Nano devices, and thus, directly mapped to @subpage use_case_review.

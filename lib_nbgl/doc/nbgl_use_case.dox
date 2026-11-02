@@ -552,6 +552,17 @@ void startReview(void) {
 }
 @endcode
 
+By default, a value is fully displayed, using the *more* button if it's too long. The
+*nbMaxLinesForValue* field of a tag/value pair can instead limit its value to 1 to 3 lines: if the
+value doesn't fit, it is cut and its last line ends with "...", so it's up to the app to make sure
+the user doesn't need the rest of it (for example with an alias).
+
+@code
+  pairs[0].item               = "To";
+  pairs[0].value              = "My savings account with a very long name";
+  pairs[0].nbMaxLinesForValue = 2;  // at most 2 lines, ending with "..." if it doesn't fit
+@endcode
+
 @subsection use_case_review_light Light review Use Case
 
 In some cases, the developer may want to display a review but with a less intense confirmation

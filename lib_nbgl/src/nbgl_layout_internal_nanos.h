@@ -39,6 +39,13 @@ extern "C" {
 #define NB_MAX_BUTTON_ROWS 3
 
 /**
+ * @brief Maximum number of buttons used to display the sub text in @ref BUTTON_INFO style with
+ * @ref nbgl_layoutAddText()
+ *
+ */
+#define NB_MAX_BUTTON_ROWS_PUBLIC 2
+
+/**
  * @brief Maximum number of bytes (including '\0') of the text of a button in @ref BUTTON_INFO
  * style. A row of narrow chars is cut at this length, the rest goes in the next button
  *
@@ -77,6 +84,7 @@ int      layoutAddText(nbgl_layout_t                  *layout,
                        const char                     *text,
                        const char                     *subText,
                        nbgl_contentCenteredInfoStyle_t style,
+                       uint8_t                         nbMaxLines,
                        bool                            ellipsis);
 
 /**********************

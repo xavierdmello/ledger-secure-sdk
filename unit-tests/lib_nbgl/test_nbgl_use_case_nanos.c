@@ -6,6 +6,7 @@
 
 #include "nbgl_use_case.h"
 #include "nbgl_step.h"
+#include "nbgl_step_internal.h"
 #include "glyphs.h"
 
 // Regression tests for V-129: the Nano use cases count their pages in 8-bit fields. A page
@@ -61,6 +62,35 @@ nbgl_step_t nbgl_stepDrawText(nbgl_stepPosition_t               pos,
     (void) style;
     (void) modal;
     record_step(onActionCallback, text, subText, NULL);
+    return &dummy_step;
+}
+
+// Max number of lines and style given to the text step of each pair (by index), or
+// NOT_DRAWN_AS_TEXT if the pair was not drawn with stepDrawText()
+#define NOT_DRAWN_AS_TEXT 0xFF
+static uint8_t                         pair_max_lines[MAX_ELEMS];
+static nbgl_contentCenteredInfoStyle_t pair_style[MAX_ELEMS];
+
+static int displayed_pair(void);
+
+nbgl_step_t stepDrawText(nbgl_stepPosition_t               pos,
+                         nbgl_stepButtonCallback_t         onActionCallback,
+                         nbgl_screenTickerConfiguration_t *ticker,
+                         const char                       *text,
+                         const char                       *subText,
+                         nbgl_contentCenteredInfoStyle_t   style,
+                         bool                              modal,
+                         uint8_t                           nbMaxLinesForSubText)
+{
+    (void) pos;
+    (void) ticker;
+    (void) modal;
+    record_step(onActionCallback, text, subText, NULL);
+    int idx = displayed_pair();
+    if (idx >= 0) {
+        pair_max_lines[idx] = nbMaxLinesForSubText;
+        pair_style[idx]     = style;
+    }
     return &dummy_step;
 }
 
@@ -207,8 +237,10 @@ void setUp(void)
         pairs[i].item  = tag_names[i];
         pairs[i].value = "value";
         memset(&switches[i], 0, sizeof(switches[i]));
-        switches[i].text = tag_names[i];
-        bar_texts[i]     = tag_names[i];
+        switches[i].text  = tag_names[i];
+        bar_texts[i]      = tag_names[i];
+        pair_max_lines[i] = NOT_DRAWN_AS_TEXT;
+        pair_style[i]     = REGULAR_INFO;
     }
     nb_draws      = 0;
     last_callback = NULL;
@@ -552,6 +584,118 @@ static void test_streaming_continue_max_pairs_displays_all_then_continues(void)
 }
 
 // ============================================================================
+// nbMaxLinesForValue of the pairs: forwarded to the text step of the pair
+// ============================================================================
+
+static const nbgl_contentValueExt_t alias_extension
+    = {.aliasType = ENS_ALIAS, .fullValue = "full value", .title = "title"};
+
+// pair 0: no max, pair 1: regular value with a max, pair 2: alias with a max, pair 3: centered
+// info with a max (ignored)
+static void set_pairs_with_max_lines(void)
+{
+    pairs[1].nbMaxLinesForValue = 2;
+    pairs[2].nbMaxLinesForValue = 1;
+    pairs[2].aliasValue         = 1;
+    pairs[2].extension          = &alias_extension;
+    pairs[3].nbMaxLinesForValue = 3;
+    pairs[3].centeredInfo       = 1;
+}
+
+// aliasStyle: style used by the use case for an alias value (generic review doesn't display
+// aliases as buttons)
+static void check_pairs_with_max_lines_drawn(nbgl_contentCenteredInfoStyle_t aliasStyle)
+{
+    TEST_ASSERT_EQUAL_UINT8(0, pair_max_lines[0]);
+    TEST_ASSERT_EQUAL_INT(BOLD_TEXT1_INFO, pair_style[0]);
+    TEST_ASSERT_EQUAL_UINT8(2, pair_max_lines[1]);
+    TEST_ASSERT_EQUAL_INT(BOLD_TEXT1_INFO, pair_style[1]);
+    TEST_ASSERT_EQUAL_UINT8(1, pair_max_lines[2]);
+    TEST_ASSERT_EQUAL_INT(aliasStyle, pair_style[2]);
+    // a centered info is not drawn as a text step, so its max is not used
+    TEST_ASSERT_EQUAL_UINT8(NOT_DRAWN_AS_TEXT, pair_max_lines[3]);
+}
+
+static void test_review_pair_max_lines_is_forwarded(void)
+{
+    set_pairs_with_max_lines();
+    review(4, NULL);
+    walk_to_approve_checking_pairs(4);
+    check_pairs_with_max_lines_drawn(BUTTON_INFO);
+}
+
+static void test_review_with_callback_pair_max_lines_is_forwarded(void)
+{
+    set_pairs_with_max_lines();
+    list = make_callback_list(4, 0);
+    nbgl_useCaseReview(TYPE_TRANSACTION, &list, &C_icon_warning, "Review", NULL, NULL, on_choice);
+    walk_to_approve_checking_pairs(4);
+    check_pairs_with_max_lines_drawn(BUTTON_INFO);
+}
+
+static void test_streaming_pair_max_lines_is_forwarded(void)
+{
+    set_pairs_with_max_lines();
+    list = make_tag_value_list(4);
+    nbgl_useCaseReviewStreamingContinue(&list, on_choice);
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_INT(i, displayed_pair());
+        press(BUTTON_RIGHT_PRESSED);
+    }
+    check_pairs_with_max_lines_drawn(BUTTON_INFO);
+}
+
+static void test_generic_review_pair_max_lines_is_forwarded(void)
+{
+    set_pairs_with_max_lines();
+    // pairs 0 and 1 in a TAG_VALUE_LIST, pairs 2 and 3 in a TAG_VALUE_CONFIRM
+    nbgl_content_t content[2]                             = {0};
+    content[0].type                                       = TAG_VALUE_LIST;
+    content[0].content.tagValueList                       = make_tag_value_list(2);
+    content[1].type                                       = TAG_VALUE_CONFIRM;
+    content[1].content.tagValueConfirm.tagValueList       = make_tag_value_list(2);
+    content[1].content.tagValueConfirm.tagValueList.pairs = &pairs[2];
+    content[1].content.tagValueConfirm.confirmationText   = "Confirm";
+    nbgl_genericContents_t contents                       = {0};
+    contents.contentsList                                 = content;
+    contents.nbContents                                   = 2;
+
+    nbgl_useCaseGenericReview(&contents, "Reject", on_quit);
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_INT(i, displayed_pair());
+        press(BUTTON_RIGHT_PRESSED);
+    }
+    check_pairs_with_max_lines_drawn(BOLD_TEXT1_INFO);
+}
+
+static void test_alias_list_pair_max_lines_is_forwarded(void)
+{
+    static nbgl_contentTagValueList_t aliasList;
+    static nbgl_contentValueExt_t     listExtension;
+
+    // the extension of pair 0 is a list of pairs 10 (no max) and 11 (with a max)
+    aliasList                    = make_tag_value_list(2);
+    aliasList.pairs              = &pairs[10];
+    pairs[11].nbMaxLinesForValue = 2;
+    memset(&listExtension, 0, sizeof(listExtension));
+    listExtension.aliasType    = TAG_VALUE_LIST_ALIAS;
+    listExtension.tagValuelist = &aliasList;
+    pairs[0].aliasValue        = 1;
+    pairs[0].extension         = &listExtension;
+
+    review(1, NULL);
+    press(BUTTON_RIGHT_PRESSED);
+    TEST_ASSERT_EQUAL_INT(0, displayed_pair());
+    // display the pairs of the extension
+    press(BUTTON_BOTH_PRESSED);
+    TEST_ASSERT_EQUAL_INT(10, displayed_pair());
+    press(BUTTON_RIGHT_PRESSED);
+    TEST_ASSERT_EQUAL_INT(11, displayed_pair());
+    TEST_ASSERT_EQUAL_UINT8(0, pair_max_lines[10]);
+    TEST_ASSERT_EQUAL_UINT8(2, pair_max_lines[11]);
+}
+
+// ============================================================================
 // nbgl_useCaseChoiceWithDetails: intro pages + bar pages + confirm/cancel
 // ============================================================================
 
@@ -758,6 +902,11 @@ int main(void)
     RUN_TEST(test_address_review_without_callback_is_rejected);
     RUN_TEST(test_streaming_continue_overflow_is_rejected);
     RUN_TEST(test_streaming_continue_max_pairs_displays_all_then_continues);
+    RUN_TEST(test_review_pair_max_lines_is_forwarded);
+    RUN_TEST(test_review_with_callback_pair_max_lines_is_forwarded);
+    RUN_TEST(test_streaming_pair_max_lines_is_forwarded);
+    RUN_TEST(test_generic_review_pair_max_lines_is_forwarded);
+    RUN_TEST(test_alias_list_pair_max_lines_is_forwarded);
     RUN_TEST(test_choice_overflow_is_rejected);
     RUN_TEST(test_choice_first_overflowing_count_is_rejected);
     RUN_TEST(test_choice_max_bars_reaches_confirm_and_cancel);
