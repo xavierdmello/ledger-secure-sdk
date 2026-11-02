@@ -8,6 +8,12 @@ stored persistently.  On registration the device generates a random @b group_id 
 32 bytes), authenticates it as a @b group_handle (64 bytes), and returns two independent
 HMAC Proofs of Registration that the wallet stores alongside the contact record.
 
+Because the device is stateless, proofs cannot be revoked: after any confirmed edit (contact
+name, identifier, scope, or Ledger Account name), the previous proofs remain valid and the
+device still accepts them, including in the Provide Contact commands, which have no review
+screen.  The wallet (Ledger Wallet) must therefore delete the previous proofs as soon as the
+new ones are stored.
+
 The feature provides:
 
 - Binding a contact name and scope to an external identifier (e.g. an Ethereum address) via
@@ -147,8 +153,10 @@ message = name_len(1) | account_name | blockchain_family(1) [| chain_id(8)]
 -# <b>Multi-address contacts</b>: Register Identity can be called with an existing
    @c group_handle + @c HMAC_PROOF to link a second @c (scope, identifier) pair to the same
    @c gid.  The device verifies ownership before issuing a new @c HMAC_REST.  Because all
-   addresses share the same @c gid, a single Edit Contact Name invalidates the @c HMAC_PROOF
-   for every address in the group simultaneously.
+   addresses share the same @c gid, a single Edit Contact Name returns a new @c HMAC_PROOF
+   for every address in the group simultaneously.  The previous @c HMAC_PROOF is not revoked:
+   the device is stateless and still accepts it, so the wallet (Ledger Wallet) must delete it
+   once the new one is stored.
 -# <b>Syscall-backed crypto</b>: All cryptographic operations (Group Handle, Identity, and
    Ledger Account) are delegated to OS syscalls with distinct domain-separation salts,
    preventing cross-feature key reuse.

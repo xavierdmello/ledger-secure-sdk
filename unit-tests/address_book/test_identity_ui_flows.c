@@ -87,7 +87,7 @@ void setUp(void)
     io_send_response_buffers_IgnoreAndReturn(0);
     sys_address_book_hmac_IgnoreAndReturn(true);
     sys_address_book_hmac_verify_IgnoreAndReturn(true);
-    is_printable_string_IgnoreAndReturn(true);
+    is_displayable_string_IgnoreAndReturn(true);
     cx_rng_no_throw_Ignore();
     g_mock_review_choice = true;
     g_mock_ri_result     = true;
@@ -459,6 +459,26 @@ static void test_ei_success(void)
     TEST_ASSERT_EQUAL_INT(SWO_NO_RESPONSE, edit_identifier(buf, len));
 }
 
+static void test_ei_ethereum_success(void)
+{
+    uint8_t buf[512];
+    size_t  len = build_edit_identifier(buf,
+                                       sizeof(buf),
+                                       0x31,
+                                       0x01,
+                                       "Alice",
+                                       "Ethereum",
+                                       true,
+                                       true,
+                                       true,
+                                       true,
+                                       0x01,
+                                       true,
+                                       true,
+                                       true);
+    TEST_ASSERT_EQUAL_INT(SWO_NO_RESPONSE, edit_identifier(buf, len));
+}
+
 static void test_ei_review_rejected(void)
 {
     g_mock_review_choice = false;
@@ -641,6 +661,7 @@ int main(void)
     RUN_TEST(test_ei_ethereum_missing_chain_id);
     RUN_TEST(test_ei_app_rejects);
     RUN_TEST(test_ei_success);
+    RUN_TEST(test_ei_ethereum_success);
     RUN_TEST(test_ei_review_rejected);
 
     /* edit_scope */
