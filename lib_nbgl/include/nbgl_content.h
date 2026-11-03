@@ -195,13 +195,19 @@ typedef struct {
         const nbgl_contentValueExt_t
             *extension;  ///< if not NULL, gives additional info on value field
     };
-    uint8_t forcePageStart : 1;  ///< if set to 1, the tag will be displayed at the top of a new
-                                 ///< review page
-    uint8_t centeredInfo : 1;    ///< if set to 1, the tag will be displayed as a centered info
-    uint8_t aliasValue : 1;      ///< if set to 1, the value represents an alias
-                                 ///< - On wallet size, a > icon enables to
-                                 ///< view the full value (extension field in union)
-                                 ///< - On Nano, the value is displayed in white
+    uint8_t forcePageStart : 1;      ///< if set to 1, the tag will be displayed at the top of a new
+                                     ///< review page
+    uint8_t centeredInfo : 1;        ///< if set to 1, the tag will be displayed as a centered info
+    uint8_t aliasValue : 1;          ///< if set to 1, the value represents an alias
+                                     ///< - On wallet size, a > icon enables to
+                                     ///< view the full value (extension field in union)
+                                     ///< - On Nano, the value is displayed in white
+    uint8_t nbMaxLinesForValue : 2;  ///< if > 0, max number of lines (1 to 3) for the value. If
+                                     ///< the value doesn't fit, it is cut and its last line ends
+                                     ///< with "..." (displaying the whole value elsewhere is up
+                                     ///< to the application). On Nano, such a value is displayed
+                                     ///< in a single page. Not used when the pair is displayed
+                                     ///< as a centered info by a use case
 } nbgl_contentTagValue_t;
 
 /**
@@ -232,7 +238,9 @@ typedef struct nbgl_contentTagValueList_s {
     uint8_t startIndex;  ///< index of the first pair to get with callback (pairs are retrieved
                          ///< with callback(startIndex) to callback(startIndex + nbPairs - 1))
     bool    hideEndOfLastLine;   ///< if set to true, replace 3 last chars of last line by "..."
-    uint8_t nbMaxLinesForValue;  ///< if > 0, set the max number of lines for value field.
+    uint8_t nbMaxLinesForValue;  ///< if > 0, set the max number of lines for value field. Meant
+                                 ///< for the layout and page APIs: most review use cases
+                                 ///< override it (use nbMaxLinesForValue of the pairs instead)
     uint8_t token;  ///< the token that will be used as argument of the callback if icon in any
                     ///< tag/value pair is touched (index is the index of the pair in pairs[])
     bool smallCaseForValue;  ///< if set to true, a 24px font is used for value text, otherwise a

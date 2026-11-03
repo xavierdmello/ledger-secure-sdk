@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include "nbgl_debug.h"
 #include "nbgl_use_case.h"
+#include "nbgl_layout_internal.h"
 #include "glyphs.h"
 #include "os_io_seph_ux.h"
 #include "os_pic.h"
@@ -379,6 +380,9 @@ static void pageCallback(int token, uint8_t index);
 #ifdef NBGL_QRCODE
 static void displayAddressQRCode(void);
 #endif  // NBGL_QRCODE
+
+static uint8_t getNbLinesInDetailsPage(const nbgl_contentTagValue_t *pair);
+
 static void modalLayoutTouchCallback(int token, uint8_t index);
 static void displaySkipWarning(void);
 
@@ -1235,6 +1239,7 @@ static bool genericContextPreparePageContent(const nbgl_content_t *p_content,
                         }
                     }
                 }
+                // (smallCaseForValue is also forced to false in getNbPagesForContent())
                 p_tagValueList->smallCaseForValue  = false;
                 p_tagValueList->nbMaxLinesForValue = NB_MAX_LINES_IN_REVIEW;
                 p_tagValueList->hideEndOfLastLine  = true;
@@ -1462,31 +1467,48 @@ static void displayGenericContextPage(uint8_t pageIdx, bool forceFullRefresh)
     }
 }
 
+// from the given position in the value of the current details context, return the number of bytes
+// to skip to start the next details page, or 0 if all the remaining text fits in the page. Used to
+// count, display and go back to the pages, so that they always match.
+// If not NULL, ellipsis is set to true if the page ends with "..." (replacing its last 3 chars,
+// which are displayed again at the beginning of the next page)
+static uint16_t getDetailsPageLen(const char *text, bool *ellipsis)
+{
+    uint16_t len;
+
+    if (ellipsis != NULL) {
+        *ellipsis = false;
+    }
+    if (nbgl_getTextNbLinesInWidth(SMALL_BOLD_FONT, text, AVAILABLE_WIDTH, detailsContext.wrapping)
+        <= NB_MAX_LINES_IN_DETAILS) {
+        return 0;
+    }
+    nbgl_getTextMaxLenInNbLines(SMALL_BOLD_FONT,
+                                text,
+                                AVAILABLE_WIDTH,
+                                NB_MAX_LINES_IN_DETAILS,
+                                &len,
+                                detailsContext.wrapping);
+    // don't start next page on a \n
+    if (text[len] == '\n') {
+        len++;
+    }
+    else if (!detailsContext.wrapping) {
+        len -= 3;
+        if (ellipsis != NULL) {
+            *ellipsis = true;
+        }
+    }
+    return len;
+}
+
 // from the current details context, return a pointer on the details at the given page
 static const char *getDetailsPageAt(uint8_t detailsPage)
 {
     uint8_t     page        = 0;
     const char *currentChar = detailsContext.value;
     while (page < detailsPage) {
-        uint16_t nbLines
-            = nbgl_getTextNbLinesInWidth(SMALL_BOLD_FONT, currentChar, AVAILABLE_WIDTH, false);
-        if (nbLines > NB_MAX_LINES_IN_DETAILS) {
-            uint16_t len;
-            nbgl_getTextMaxLenInNbLines(SMALL_BOLD_FONT,
-                                        currentChar,
-                                        AVAILABLE_WIDTH,
-                                        NB_MAX_LINES_IN_DETAILS,
-                                        &len,
-                                        detailsContext.wrapping);
-            // don't start next page on a \n
-            if (currentChar[len] == '\n') {
-                len++;
-            }
-            else if (detailsContext.wrapping == false) {
-                len -= 3;
-            }
-            currentChar = currentChar + len;
-        }
+        currentChar = currentChar + getDetailsPageLen(currentChar, NULL);
         page++;
     }
     return currentChar;
@@ -1528,26 +1550,11 @@ static void displayDetailsPage(uint8_t detailsPage, bool forceFullRefresh)
         currentPair.value = detailsContext.nextPageStart;
     }
     detailsContext.currentPage = detailsPage;
-    uint16_t nbLines           = nbgl_getTextNbLinesInWidth(
-        SMALL_BOLD_FONT, currentPair.value, AVAILABLE_WIDTH, detailsContext.wrapping);
+    bool     ellipsis;
+    uint16_t len = getDetailsPageLen(currentPair.value, &ellipsis);
 
-    if (nbLines > NB_MAX_LINES_IN_DETAILS) {
-        uint16_t len;
-        nbgl_getTextMaxLenInNbLines(SMALL_BOLD_FONT,
-                                    currentPair.value,
-                                    AVAILABLE_WIDTH,
-                                    NB_MAX_LINES_IN_DETAILS,
-                                    &len,
-                                    detailsContext.wrapping);
-        content.tagValueDetails.tagValueList.hideEndOfLastLine = false;
-        // don't start next page on a \n
-        if (currentPair.value[len] == '\n') {
-            len++;
-        }
-        else if (!detailsContext.wrapping) {
-            content.tagValueDetails.tagValueList.hideEndOfLastLine = true;
-            len -= 3;
-        }
+    if (len > 0) {
+        content.tagValueDetails.tagValueList.hideEndOfLastLine = ellipsis;
         // memorize next position to save processing
         detailsContext.nextPageStart = currentPair.value + len;
         // use special feature to keep only NB_MAX_LINES_IN_DETAILS lines and replace the last 3
@@ -1712,9 +1719,19 @@ static void displayTagValueListModalPage(uint8_t pageIdx, bool forceFullRefresh)
     }
     detailsContext.currentPage = pageIdx;
 
-    content.tagValueList.pairs
-        = &genericContext.currentTagValues->pairs[detailsContext.currentPairIdx];
     content.tagValueList.nbPairs = nbElementsInPage;
+    // (lists using a callback are not drawn here, their pages are empty)
+    if (genericContext.currentTagValues->pairs != NULL) {
+        content.tagValueList.pairs
+            = &genericContext.currentTagValues->pairs[detailsContext.currentPairIdx];
+        if (nbElementsInPage == 1) {
+            // a pair alone in its page may be too long to fit (see getNbTagValuesInDetailsPage()):
+            // its value is then truncated to the lines fitting in the page, ending with "..."
+            content.tagValueList.nbMaxLinesForValue = getNbLinesInDetailsPage(
+                getTagValuePair(genericContext.currentTagValues, detailsContext.currentPairIdx));
+            content.tagValueList.hideEndOfLastLine = true;
+        }
+    }
     detailsContext.currentPairIdx += nbElementsInPage;
     if (info.nbPages == 1) {
         // if only one page, no navigation bar, and use a footer instead
@@ -2158,6 +2175,43 @@ static void keyboardGeneric_cb(int token, uint8_t index)
 #endif
 
 /**
+ * @brief computes the height of the given tag/value pair, as drawn by nbgl_layoutAddTagValueList()
+ *
+ * @param pair tag/value pair
+ * @param valueFont font used to draw the value
+ * @param listMaxLines max number of lines of the values of the list (0 if not limited)
+ * @param wrapping if true, the value is wrapped on separators like spaces
+ * @param nbLines (output) number of lines of the value, as drawn
+ * @return the height of the pair (tag, value and potential alias sub-name), in pixels
+ */
+static uint16_t getTagValueHeight(const nbgl_contentTagValue_t *pair,
+                                  nbgl_font_id_e                valueFont,
+                                  uint8_t                       listMaxLines,
+                                  bool                          wrapping,
+                                  uint16_t                     *nbLines)
+{
+    uint16_t height;
+    uint8_t  maxLines = layoutGetTagValueMaxLines(listMaxLines, pair, NULL);
+
+    // tag height (the tag is always wrapped), and space between tag and value
+    height = nbgl_getTextHeightInWidth(SMALL_REGULAR_FONT, pair->item, AVAILABLE_WIDTH, true)
+             + TAG_VALUE_INTERVALE;
+    // value height, in a width reduced if there is an icon on its right, possibly limited to
+    // maxLines lines
+    *nbLines = nbgl_getTextNbLinesInWidth(
+        valueFont, pair->value, layoutGetTagValueWidth(layoutGetTagValueIcon(pair)), wrapping);
+    if ((maxLines > 0) && (*nbLines > maxLines)) {
+        *nbLines = maxLines;
+    }
+    height += *nbLines * nbgl_getFontLineHeight(valueFont);
+    // potential alias sub-name, under the value
+    if ((pair->aliasValue) && (pair->extension != NULL) && (pair->extension->aliasSubName)) {
+        height += TAG_VALUE_INTERVALE + nbgl_getFontLineHeight(SMALL_REGULAR_FONT);
+    }
+    return height;
+}
+
+/**
  * @brief computes the number of tag/values pairs displayable in a page, with the given list of
  * tag/value pairs
  *
@@ -2222,21 +2276,10 @@ static uint8_t getNbTagValuesInPage(uint8_t                           nbPairs,
             }
         }
 
-        // tag height
-        currentHeight += nbgl_getTextHeightInWidth(
-            SMALL_REGULAR_FONT, pair->item, AVAILABLE_WIDTH, tagValueList->wrapping);
-        // space between tag and value
-        currentHeight += TAG_VALUE_INTERVALE;
-        // set value font
-        if (tagValueList->smallCaseForValue) {
-            value_font = SMALL_REGULAR_FONT;
-        }
-        else {
-            value_font = LARGE_MEDIUM_FONT;
-        }
-        // nb lines for value
-        nbLines = nbgl_getTextNbLinesInWidth(
-            value_font, pair->value, AVAILABLE_WIDTH, tagValueList->wrapping);
+        // value font, as in nbgl_layoutAddTagValueList(), from the smallCaseForValue of the given
+        // list (the use cases give it with the one used to draw the page, the public helpers with
+        // the one of the application)
+        value_font = layoutGetTagValueFont(tagValueList->smallCaseForValue);
         // honor list-level nbMaxLinesForValue: when set, the value will be
         // displayed truncated to that many lines, so account for its
         // truncated height rather than its full height.
@@ -2248,23 +2291,14 @@ static uint8_t getNbTagValuesInPage(uint8_t                           nbPairs,
         // estimate here, otherwise the page gets under-allocated and content is
         // drawn off-screen. Only honor a value that the display will actually
         // apply (i.e. >= NB_MAX_LINES_IN_REVIEW).
-        uint8_t effectiveMaxLines = tagValueList->nbMaxLinesForValue;
-        if ((effectiveMaxLines > 0) && (effectiveMaxLines < NB_MAX_LINES_IN_REVIEW)) {
-            effectiveMaxLines = 0;
+        uint8_t listMaxLines = tagValueList->nbMaxLinesForValue;
+        if ((listMaxLines > 0) && (listMaxLines < NB_MAX_LINES_IN_REVIEW)) {
+            listMaxLines = 0;
         }
-        if ((effectiveMaxLines > 0) && (nbLines > effectiveMaxLines)) {
-            nbLines = effectiveMaxLines;
-            currentHeight += nbLines * nbgl_getFontLineHeight(value_font);
-        }
-        else {
-            currentHeight += nbgl_getTextHeightInWidth(
-                value_font, pair->value, AVAILABLE_WIDTH, tagValueList->wrapping);
-        }
-
-        // potential subAlias text
-        if ((pair->aliasValue) && (pair->extension != NULL) && (pair->extension->aliasSubName)) {
-            currentHeight += TAG_VALUE_INTERVALE + nbgl_getFontLineHeight(SMALL_REGULAR_FONT);
-        }
+        // tag/value height (the max number of lines of the pair itself is never overridden, so it
+        // is combined with the list one exactly as nbgl_layoutAddTagValueList() does)
+        currentHeight
+            += getTagValueHeight(pair, value_font, listMaxLines, tagValueList->wrapping, &nbLines);
         if ((currentHeight >= maxUsableHeight) || (nbLines > NB_MAX_LINES_IN_REVIEW)) {
             if (nbPairsInPage == 0) {
                 // Pair too long to fit in a single screen
@@ -2317,6 +2351,7 @@ static uint8_t getNbTagValuesInDetailsPage(uint8_t                           nbP
 
     while (nbPairsInPage < nbPairs) {
         const nbgl_layoutTagValue_t *pair;
+        uint16_t                     nbLines;
 
         // margin between pairs
         // 12 or 24 px between each tag/value pair
@@ -2326,23 +2361,52 @@ static uint8_t getNbTagValuesInDetailsPage(uint8_t                           nbP
         // fetch tag/value pair strings.
         pair = getTagValuePair(tagValueList, startIndex + nbPairsInPage);
 
-        // tag height
-        currentHeight += nbgl_getTextHeightInWidth(
-            SMALL_REGULAR_FONT, pair->item, AVAILABLE_WIDTH, tagValueList->wrapping);
-        // space between tag and value
-        currentHeight += 4;
-
-        // value height
-        currentHeight += nbgl_getTextHeightInWidth(
-            SMALL_REGULAR_FONT, pair->value, AVAILABLE_WIDTH, tagValueList->wrapping);
+        // tag/value height, with the parameters used by displayTagValueListModalPage() to draw it:
+        // small case (so bold font) for values, wrapping of the details context, no list limit
+        currentHeight
+            += getTagValueHeight(pair, SMALL_BOLD_FONT, 0, detailsContext.wrapping, &nbLines);
 
         // we have reached the maximum height, it means than there are to many pairs
         if (currentHeight >= maxUsableHeight) {
+            if (nbPairsInPage == 0) {
+                // Pair too long to fit in a single page: it is the only one of the page, otherwise
+                // it would never be displayed (and the pages would all be empty). Its value is
+                // truncated to fit (see getNbLinesInDetailsPage())
+                nbPairsInPage = 1;
+            }
             break;
         }
         nbPairsInPage++;
     }
     return nbPairsInPage;
+}
+
+/**
+ * @brief computes the max number of lines of the value of the given tag/value pair, so that it fits
+ * alone in a details page (drawn by displayTagValueListModalPage())
+ *
+ * @param pair tag/value pair
+ * @return the max number of lines of the value, or 0 if the whole value fits
+ */
+static uint8_t getNbLinesInDetailsPage(const nbgl_contentTagValue_t *pair)
+{
+    const uint16_t lineHeight = nbgl_getFontLineHeight(SMALL_BOLD_FONT);
+    uint16_t       nbLines;
+    // same height as in getNbTagValuesInDetailsPage()
+    uint16_t height
+        = PRE_TAG_VALUE_MARGIN
+          + getTagValueHeight(pair, SMALL_BOLD_FONT, 0, detailsContext.wrapping, &nbLines);
+
+    if (height < TAG_VALUE_AREA_HEIGHT) {
+        return 0;
+    }
+    // height of the pair without its value
+    height -= nbLines * lineHeight;
+    if ((height + lineHeight) >= TAG_VALUE_AREA_HEIGHT) {
+        // tag too long to even display a line of value: display at least one line
+        return 1;
+    }
+    return (TAG_VALUE_AREA_HEIGHT - 1 - height) / lineHeight;
 }
 
 static uint8_t getNbPagesForContent(const nbgl_content_t *content,
@@ -2358,18 +2422,21 @@ static uint8_t getNbPagesForContent(const nbgl_content_t *content,
 
     nbElements = getContentNbElement(content);
 
+    // the pages of a TAG_VALUE_LIST are drawn with smallCaseForValue forced to false (see
+    // genericContextPreparePageContent()), so its pairs must be measured the same way
+    nbgl_contentTagValueList_t drawnList = {0};
+    if (content->type == TAG_VALUE_LIST) {
+        drawnList                   = content->content.tagValueList;
+        drawnList.smallCaseForValue = false;
+    }
+
     while (nbElements > 0) {
         flag = 0;
         // if the current page is not the first one (or last), a navigation bar exists
         bool hasNav = !isLast || (pageIdxStart > 0) || (elemIdx > 0);
         if (content->type == TAG_VALUE_LIST) {
-            nbElementsInPage = getNbTagValuesInPage(nbElements,
-                                                    &content->content.tagValueList,
-                                                    elemIdx,
-                                                    isSkippable,
-                                                    false,
-                                                    false,
-                                                    &flag);
+            nbElementsInPage = getNbTagValuesInPage(
+                nbElements, &drawnList, elemIdx, isSkippable, false, false, &flag);
         }
         else if (content->type == TAG_VALUE_CONFIRM) {
             nbElementsInPage = getNbTagValuesInPage(nbElements,
@@ -2492,8 +2559,10 @@ static void prepareAddressConfirmationPages(const char                       *ad
         }
         // check how many can fit in a page
         memcpy(&tmpList, tagValueList, sizeof(nbgl_contentTagValueList_t));
-        tmpList.nbPairs                    = addressConfirmationContext.nbPairs;
-        tmpList.pairs                      = addressConfirmationContext.tagValuePairs;
+        tmpList.nbPairs = addressConfirmationContext.nbPairs;
+        tmpList.pairs   = addressConfirmationContext.tagValuePairs;
+        // the page is drawn with smallCaseForValue set to false (see below)
+        tmpList.smallCaseForValue          = false;
         addressConfirmationContext.nbPairs = getNbTagValuesInPage(
             addressConfirmationContext.nbPairs, &tmpList, 0, false, true, true, &flag);
         // if they don't all fit, keep only the address
@@ -3284,28 +3353,17 @@ static void displayDetails(const char *tag, const char *value, bool wrapping)
 {
     memset(&detailsContext, 0, sizeof(detailsContext));
 
-    uint16_t nbLines
-        = nbgl_getTextNbLinesInWidth(SMALL_REGULAR_FONT, value, AVAILABLE_WIDTH, wrapping);
-
     // initialize context
     detailsContext.tag         = tag;
     detailsContext.value       = value;
-    detailsContext.nbPages     = (nbLines + NB_MAX_LINES_IN_DETAILS - 1) / NB_MAX_LINES_IN_DETAILS;
     detailsContext.currentPage = 0;
     detailsContext.wrapping    = wrapping;
-    // add some spare for room lost with "..." substitution
-    if (detailsContext.nbPages > 1) {
-        uint16_t nbLostChars = (detailsContext.nbPages - 1) * 3;
-        uint16_t nbLostLines = (nbLostChars + ((AVAILABLE_WIDTH) / 16) - 1)
-                               / ((AVAILABLE_WIDTH) / 16);  // 16 for average char width
-        uint8_t nbLinesInLastPage
-            = nbLines - ((detailsContext.nbPages - 1) * NB_MAX_LINES_IN_DETAILS);
-
-        detailsContext.nbPages += nbLostLines / NB_MAX_LINES_IN_DETAILS;
-        if ((nbLinesInLastPage + (nbLostLines % NB_MAX_LINES_IN_DETAILS))
-            > NB_MAX_LINES_IN_DETAILS) {
-            detailsContext.nbPages++;
-        }
+    // count the pages with exactly the same split as the one used to display them
+    detailsContext.nbPages = 1;
+    uint16_t len;
+    while (((len = getDetailsPageLen(value, NULL)) > 0) && (detailsContext.nbPages < UINT8_MAX)) {
+        value += len;
+        detailsContext.nbPages++;
     }
 
     displayDetailsPage(0, true);
