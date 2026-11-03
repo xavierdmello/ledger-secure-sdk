@@ -55,7 +55,7 @@ void setUp(void)
     io_send_response_buffers_IgnoreAndReturn(0);
     sys_address_book_hmac_IgnoreAndReturn(true);
     sys_address_book_hmac_verify_IgnoreAndReturn(true);
-    is_printable_string_IgnoreAndReturn(true);
+    is_displayable_string_IgnoreAndReturn(true);
     cx_rng_no_throw_Ignore();
     g_mock_provide_la_result = true;
 }

@@ -37,6 +37,8 @@ A **Contact** is defined by three elements:
 
 The device is stateless: it stores nothing persistently. On registration it generates a random **Group ID** (`gid`, 32 bytes), authenticates it with a device key as a `group_handle` (64 bytes), and returns two independent **HMAC Proofs of Registration** — `HMAC_PROOF` (covers the contact name) and `HMAC_REST` (covers scope, identifier, and network) — that the wallet stores alongside the contact record alongside the `group_handle`. Having two independent proofs allows the wallet to later rename a contact without needing to re-present the identifier or scope.
 
+Because the device is stateless, proofs cannot be revoked: after any confirmed edit (contact name, identifier, scope, or Ledger Account name), the previous proofs remain valid and the device still accepts them, including in the Provide Contact commands, which have no review screen. The wallet (Ledger Wallet) must therefore delete the previous proofs as soon as the new ones are stored.
+
 ### End-to-end use case
 
 **Step 1 — Registration (once per contact / network):**
@@ -264,7 +266,7 @@ The response contains two independent **HMAC Proofs of Registration** (`HMAC_PRO
 
 > Both optional tags must be present together or both absent — providing only one is rejected.
 
-This allows a wallet to register multiple addresses for the same contact (e.g. the same person's Ethereum Mainnet and Base addresses) under a single `group_handle`. A subsequent rename via Edit Contact Name then invalidates the shared `HMAC_PROOF` for all addresses at once.
+This allows a wallet to register multiple addresses for the same contact (e.g. the same person's Ethereum Mainnet and Base addresses) under a single `group_handle`. A subsequent rename via Edit Contact Name then returns a single new `HMAC_PROOF` shared by all addresses at once. The previous `HMAC_PROOF` is not revoked: the device is stateless and still accepts it, so the wallet (Ledger Wallet) must delete it once the new one is stored.
 
 #### TLV payload
 

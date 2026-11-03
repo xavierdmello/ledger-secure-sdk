@@ -109,7 +109,9 @@ bool address_book_handle_blockchain_family(const tlv_data_t *data, blockchain_fa
 /**
  * @brief Generic handler for printable string extraction
  *
- * Extracts a string from TLV data and verifies it contains only printable characters.
+ * Extracts a string from TLV data and verifies it contains only printable characters,
+ * with at least one visible character: a string made only of spaces is refused, as it
+ * would show as blank on screen.
  *
  * @param[in] data TLV data
  * @param[out] output_buffer Buffer to store the extracted string
@@ -125,8 +127,8 @@ bool address_book_handle_printable_string(const tlv_data_t *data,
         PRINTF("String extraction failed\n");
         return false;
     }
-    if (!is_printable_string(output_buffer, strlen(output_buffer))) {
-        PRINTF("String contains non-printable characters\n");
+    if (!is_displayable_string(output_buffer, strlen(output_buffer))) {
+        PRINTF("String contains non-printable characters or is blank\n");
         return false;
     }
     return true;
