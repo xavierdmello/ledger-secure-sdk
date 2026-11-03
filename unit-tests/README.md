@@ -37,9 +37,11 @@ and optionally `coverage.xml` (Cobertura) if `lcov_cobertura` is installed.
 | `app_storage/`     | Application persistent storage                        |
 | `exceptions/`      | `TRY` / `CATCH` / `THROW` with the framework's host stubs |
 | `io_legacy/`       | Legacy IO: one pending command at a time, CTAP cancel |
+| `lib_bagl/`        | BAGL label animations (classic and circular tickers)  |
 | `lib_alloc/`       | Dynamic memory allocator and utility wrappers         |
 | `lib_lists/`       | Generic singly- and doubly-linked list library        |
 | `lib_nbgl/`        | NBGL use cases (Nano page navigation, touch value aliases), NBGL pages |
+| `lib_ux/`          | BAGL flows: button gestures across screen changes     |
 | `lib_standard_app/`| Standard app boilerplate (APDU dispatch, IO helpers)  |
 | `lib_tlv/`         | TLV (tag-length-value) encoding/decoding              |
 | `lib_u2f/`         | CTAPHID channel handling (U2F transport, HID U2F)     |

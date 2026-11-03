@@ -84,12 +84,29 @@ static uint8_t     need_to_start_io;
 static bool io_reply_pending;
 // Only a pending CTAP2 command can be cancelled by CTAPHID_CANCEL.
 static bool io_reply_pending_cbor;
-#if defined(HAVE_IO_USB) && !defined(USE_OS_IO_STACK)
-// The reply is sent, but a USB class still reads it from the app's buffer.
+#ifndef USE_OS_IO_STACK
+// The reply is sent, but a USB class or the BLE profile still reads it from the app's buffer.
 static bool io_reply_in_flight;
-#endif  // HAVE_IO_USB && !USE_OS_IO_STACK
+#endif  // !USE_OS_IO_STACK
 
 /* Private functions ---------------------------------------------------------*/
+#ifndef USE_OS_IO_STACK
+// Whether a transport may still read a reply from the app's buffer.
+static bool reply_transport_busy(void)
+{
+    bool busy = false;
+
+#ifdef HAVE_IO_USB
+    busy |= (USBD_LEDGER_is_busy() != 0);
+#endif  // HAVE_IO_USB
+#ifdef HAVE_BLE
+    busy |= BLE_LEDGER_is_busy();
+#endif  // HAVE_BLE
+
+    return busy;
+}
+#endif  // !USE_OS_IO_STACK
+
 // Answers a command that arrives while another one awaits its reply. The answer is built
 // apart: G_io_tx_buffer is G_io_apdu_buffer, which may still hold the pending command.
 static int reject_while_reply_pending(uint8_t packet_type)
@@ -212,7 +229,6 @@ unsigned int io_seph_is_status_sent(void)
 
 unsigned short io_seph_recv(unsigned char *buffer, unsigned short maxlength, unsigned int flags)
 {
-    UNUSED(maxlength);
     UNUSED(flags);
     int status = os_io_rx_evt(G_io_rx_buffer, sizeof(G_io_rx_buffer), NULL, true);
 
@@ -221,6 +237,11 @@ unsigned short io_seph_recv(unsigned char *buffer, unsigned short maxlength, uns
             case OS_IO_PACKET_TYPE_SE_EVT:
             case OS_IO_PACKET_TYPE_SEPH:
                 status -= 1;
+                // An event that does not fit the caller's buffer is dropped, not truncated
+                if ((buffer == NULL) || (status == 0) || (status > maxlength)) {
+                    status = 0;
+                    break;
+                }
                 memcpy(buffer, &G_io_rx_buffer[1], status);
                 if (G_io_rx_buffer[1] == SEPROXYHAL_TAG_ITC_EVENT) {
                     status = io_process_itc_ux_event(buffer, status);
@@ -231,8 +252,13 @@ unsigned short io_seph_recv(unsigned char *buffer, unsigned short maxlength, uns
                 }
                 break;
             default:
+                // Nothing was copied to the caller's buffer
+                status = 0;
                 break;
         }
+    }
+    if (status < 0) {
+        status = 0;
     }
 
     return status;
@@ -387,12 +413,12 @@ int io_legacy_apdu_rx(uint8_t handle_ux_events)
 
     status = os_io_rx_evt(G_io_rx_buffer, sizeof(G_io_rx_buffer), NULL, true);
 
-#if defined(HAVE_IO_USB) && !defined(USE_OS_IO_STACK)
-    if (io_reply_in_flight && !USBD_LEDGER_is_busy()) {
+#ifndef USE_OS_IO_STACK
+    if (io_reply_in_flight && !reply_transport_busy()) {
         io_reply_in_flight = false;
         io_reply_pending   = false;
     }
-#endif  // HAVE_IO_USB && !USE_OS_IO_STACK
+#endif  // !USE_OS_IO_STACK
 
     if (status > 0) {
         switch (G_io_rx_buffer[0]) {
@@ -519,11 +545,14 @@ int io_legacy_apdu_rx(uint8_t handle_ux_events)
                 break;
             case OS_IO_PACKET_TYPE_AT_CMD:
                 // G_io_apdu_buffer may hold a command awaiting its reply: CDC input is dropped
-                // meanwhile.
-                if (os_io_reply_pending()) {
+                // meanwhile. Like any command, it must not reach the app while locked either.
+                if (os_io_reply_pending()
+                    || (os_perso_is_pin_set() == BOLOS_TRUE
+                        && os_global_pin_is_validated() != BOLOS_TRUE)) {
                     status = 0;
                     break;
                 }
+                status -= 1;
                 memmove(G_io_apdu_buffer, &G_io_rx_buffer[1], status);
                 break;
 
@@ -541,14 +570,15 @@ void os_io_set_reply_pending(bool pending)
     if (!pending) {
         io_reply_pending_cbor = false;
     }
-#if defined(HAVE_IO_USB) && !defined(USE_OS_IO_STACK)
-    // os_io_tx_cmd() can return before a USB class has read the whole reply from the app's
-    // buffer, often G_io_tx_buffer: no other command may be copied there until it has.
-    io_reply_in_flight = !pending && io_reply_pending && USBD_LEDGER_is_busy();
+#ifndef USE_OS_IO_STACK
+    // os_io_tx_cmd() can return before a USB class or the BLE profile has read the whole reply
+    // from the app's buffer, often G_io_tx_buffer: no other command may be copied there until
+    // it has.
+    io_reply_in_flight = !pending && io_reply_pending && reply_transport_busy();
     if (io_reply_in_flight) {
         return;
     }
-#endif  // HAVE_IO_USB && !USE_OS_IO_STACK
+#endif  // !USE_OS_IO_STACK
     io_reply_pending = pending;
 }
 

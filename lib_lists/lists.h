@@ -201,7 +201,7 @@ bool flist_empty(flist_node_t *const *list);
  * @param[in,out] list Pointer to the list head
  * @param[in] cmp_func Comparison function (returns true if a < b)
  * @return true on success, false on error
- * @note Time complexity: O(n log n) - merge sort algorithm
+ * @note Time complexity: O(n²) - bubble sort algorithm, avoid on large lists
  */
 bool flist_sort(flist_node_t **list, f_list_node_cmp cmp_func);
 
@@ -335,7 +335,7 @@ bool list_empty(list_node_t *const *list);
  * @param[in,out] list Pointer to the list head
  * @param[in] cmp_func Comparison function (returns true if a < b)
  * @return true on success, false on error
- * @note Time complexity: O(n log n) - merge sort algorithm
+ * @note Time complexity: O(n²) - bubble sort algorithm, avoid on large lists
  */
 bool list_sort(list_node_t **list, f_list_node_cmp cmp_func);
 

@@ -390,10 +390,18 @@ static tlv_trusted_name_status_t verify_signature(const tlv_extracted_t *tlv_ext
 tlv_trusted_name_status_t tlv_use_case_trusted_name(const buffer_t         *payload,
                                                     tlv_trusted_name_out_t *out)
 {
+    if (payload == NULL || out == NULL) {
+        PRINTF("Received NULL parameter\n");
+        return TLV_TRUSTED_NAME_PARSING_ERROR;
+    }
+
     // Main structure that will received the parsed TLV data
     tlv_extracted_t tlv_extracted = {0};
     tlv_extracted.output          = out;
     tlv_trusted_name_status_t err;
+
+    // Reset output, the caller is not required to pre-zero it
+    memset(out, 0, sizeof(*out));
 
     // The parser will fill it with the hash of the whole TLV payload (except SIGN tag)
     init_multi_hash_ctx(&tlv_extracted.hash_ctx);

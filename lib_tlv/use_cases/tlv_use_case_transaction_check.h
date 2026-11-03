@@ -65,11 +65,12 @@ typedef enum transaction_check_category_e {
 
 // Output of the use-case TLV parser
 typedef struct tlv_transaction_check_out_s {
-    // Chain ID (required for transactions, optional for typed data)
+    // Chain ID (optional, whether it is required is app-specific, see chain_id_received)
     uint64_t chain_id;
     // Transaction or message hash (32 bytes, zero-copy)
     buffer_t tx_hash;
-    // Domain hash for EIP-712 typed data (32 bytes, zero-copy)
+    // Domain hash for EIP-712 typed data (optional, whether it is required is app-specific, see
+    // domain_hash_received, 32 bytes, zero-copy)
     buffer_t domain_hash;
     // Provider message (ASCII printable, null-terminated)
     char provider_msg[TRANSACTION_CHECK_MSG_SIZE + 1];
@@ -109,6 +110,19 @@ typedef enum tlv_transaction_check_status_e {
  *
  * Parses the provided TLV payload, verifies the PKI signature, and extracts the simulation
  * result into the output structure.
+ *
+ * @warning A successful return only means the descriptor is authentic and well-formed. This
+ *          parser is chain-agnostic: it does not enforce the presence of `chain_id` nor
+ *          `domain_hash`, as their meaning depends on the blockchain (e.g. EVM vs Solana).
+ *          Before displaying the risk verdict, the caller MUST check that the descriptor is bound
+ *          to the operation being reviewed:
+ *          - `type` matches the kind of operation being reviewed,
+ *          - `tx_hash` and `address` match the transaction / message hash and the signer address,
+ *          - when relevant for the blockchain, `chain_id` is received (`chain_id_received`) and
+ *            matches the transaction chain ID,
+ *          - for EIP-712 typed data, `domain_hash` is received (`domain_hash_received`) and
+ *            matches the domain separator hash of the message.
+ *          Otherwise a valid verdict could be replayed on another chain, domain or operation.
  *
  * @param[in]  payload  Pointer to the buffer containing the TLV payload data.
  * @param[out] out      Pointer to the structure where the parsed Transaction Check result will be

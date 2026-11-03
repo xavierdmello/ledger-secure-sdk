@@ -496,6 +496,59 @@ void test_buffer_create(void)
     TEST_ASSERT_EQUAL_INT(buffer.offset, 0);
 }
 
+void test_buffer_inconsistent_offset(void)
+{
+    uint8_t  temp[4] = {0x00, 0x11, 0x22, 0x33};
+    uint8_t  out[8]  = {0};
+    uint8_t  u8      = 0xAA;
+    uint16_t u16     = 0xAAAA;
+    uint32_t u32     = 0xAAAAAAAA;
+    uint64_t u64     = 0xAAAAAAAAAAAAAAAA;
+    uint32_t path[1] = {0};
+
+    // offset > size: `size - offset` would wrap around without explicit checks
+    size_t offsets[] = {sizeof(temp) + 1, SIZE_MAX};
+    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+        buffer_t buf = {.ptr = temp, .size = sizeof(temp), .offset = offsets[i]};
+
+        TEST_ASSERT_FALSE(buffer_can_read(&buf, 0));
+        TEST_ASSERT_FALSE(buffer_can_read(&buf, 1));
+        TEST_ASSERT_FALSE(buffer_read_u8(&buf, &u8));
+        TEST_ASSERT_EQUAL(0, u8);
+        TEST_ASSERT_FALSE(buffer_read_u16(&buf, &u16, BE));
+        TEST_ASSERT_EQUAL(0, u16);
+        TEST_ASSERT_FALSE(buffer_read_u32(&buf, &u32, BE));
+        TEST_ASSERT_EQUAL(0, u32);
+        TEST_ASSERT_FALSE(buffer_read_u64(&buf, &u64, BE));
+        TEST_ASSERT_EQUAL(0, u64);
+        TEST_ASSERT_FALSE(buffer_read_varint(&buf, &u64));
+        TEST_ASSERT_FALSE(buffer_read_bip32_path(&buf, path, 1));
+        TEST_ASSERT_FALSE(buffer_read_bytes(&buf, out, 1));
+        TEST_ASSERT_FALSE(buffer_copy(&buf, out, sizeof(out)));
+        TEST_ASSERT_FALSE(buffer_move(&buf, out, sizeof(out)));
+        TEST_ASSERT_FALSE(buffer_peek(&buf, &u8));
+        TEST_ASSERT_FALSE(buffer_peek_n(&buf, 0, &u8));
+        TEST_ASSERT_FALSE(buffer_write_u8(&buf, 0x42));
+        TEST_ASSERT_FALSE(buffer_write_bytes(&buf, out, 1));
+        // State is left untouched
+        TEST_ASSERT_EQUAL(offsets[i], buf.offset);
+    }
+}
+
+void test_buffer_peek_n_overflow(void)
+{
+    uint8_t  temp[4] = {0x00, 0x11, 0x22, 0x33};
+    uint8_t  value   = 0xAA;
+    buffer_t buf     = {.ptr = temp, .size = sizeof(temp), .offset = 1};
+
+    // `n + 1` would wrap around to 0 and pass a naive bound check
+    TEST_ASSERT_FALSE(buffer_peek_n(&buf, SIZE_MAX, &value));
+    TEST_ASSERT_FALSE(buffer_peek_n(&buf, sizeof(temp) - 1, &value));
+    TEST_ASSERT_EQUAL(0xAA, value);
+    TEST_ASSERT_TRUE(buffer_peek_n(&buf, sizeof(temp) - 2, &value));
+    TEST_ASSERT_EQUAL(0x33, value);
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -514,5 +567,7 @@ int main(void)
     RUN_TEST(test_buffer_get_path_bip32);
     RUN_TEST(test_bad_buffer_get_path_bip32);
     RUN_TEST(test_buffer_create);
+    RUN_TEST(test_buffer_inconsistent_offset);
+    RUN_TEST(test_buffer_peek_n_overflow);
     return UNITY_END();
 }

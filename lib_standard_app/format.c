@@ -16,7 +16,7 @@
 
 #include <stddef.h>   // size_t
 #include <stdint.h>   // int*_t, uint*_t
-#include <string.h>   // strncpy, memmove
+#include <string.h>   // memcpy, memset, strlen, strnlen
 #include <stdbool.h>  // bool
 
 #include "format.h"
@@ -102,6 +102,12 @@ bool format_fpu64(char *dst, size_t dst_len, const uint64_t value, uint8_t decim
 {
     char buffer[21] = {0};
 
+    if (dst_len == 0) {
+        return false;
+    }
+    // never leave a stale or partial amount in dst on failure
+    dst[0] = '\0';
+
     if (!format_u64(buffer, sizeof(buffer), value)) {
         return false;
     }
@@ -109,16 +115,16 @@ bool format_fpu64(char *dst, size_t dst_len, const uint64_t value, uint8_t decim
     size_t digits = strlen(buffer);
 
     if (digits <= decimals) {
-        if (dst_len <= 2 + decimals - digits) {
+        // "0." + (decimals - digits) leading zeros + digits + '\0'
+        if (dst_len <= 2 + decimals) {
             return false;
         }
         *dst++ = '0';
         *dst++ = '.';
-        for (uint16_t i = 0; i < decimals - digits; i++, dst++) {
-            *dst = '0';
-        }
-        dst_len -= 2 + decimals - digits;
-        strncpy(dst, buffer, dst_len);
+        memset(dst, '0', decimals - digits);
+        dst += decimals - digits;
+        memcpy(dst, buffer, digits);
+        dst[digits] = '\0';
     }
     else {
         if (dst_len <= digits + 1 + decimals) {
@@ -126,9 +132,10 @@ bool format_fpu64(char *dst, size_t dst_len, const uint64_t value, uint8_t decim
         }
 
         const size_t shift = digits - decimals;
-        memmove(dst, buffer, shift);
+        memcpy(dst, buffer, shift);
         dst[shift] = '.';
-        strncpy(dst + shift + 1, buffer + shift, decimals);
+        memcpy(dst + shift + 1, buffer + shift, decimals);
+        dst[digits + 1] = '\0';
     }
 
     return true;
@@ -140,7 +147,11 @@ bool format_fpu64_trimmed(char *dst, size_t dst_len, const uint64_t value, uint8
         return false;
     }
 
-    size_t len = strlen(dst);
+    size_t len = strnlen(dst, dst_len);
+    if (len == dst_len) {
+        dst[0] = '\0';
+        return false;
+    }
 
     while (len > 0 && (dst[len - 1] == '0' || dst[len - 1] == '.')) {
         if (dst[len - 1] == '.') {
