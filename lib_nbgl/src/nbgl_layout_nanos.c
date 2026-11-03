@@ -30,11 +30,6 @@
 // used by screen
 #define NB_MAX_SCREEN_CHILDREN 7
 
-#define BUTTON_MARGIN_Y 12
-
-// this is the maximum number of chars fitting in a line
-#define NB_MAX_CHAR_IN_LINE 20
-
 #define ELLIPSIS      "..."
 #define ELLIPSIS_SIZE sizeof(ELLIPSIS)  // includes '\0'
 
@@ -123,6 +118,146 @@ void layoutAddObject(nbgl_layoutInternal_t *layout, nbgl_obj_t *obj)
     }
     layout->children[layout->nbChildren] = obj;
     layout->nbChildren++;
+}
+
+/**
+ * @brief computes the part of the given text fitting in the given width and in the given number
+ * of bytes, in the font of the buttons in @ref BUTTON_INFO style
+ *
+ * @param text text to display, starting at the beginning of the button
+ * @param maxWidth max width in pixels of the text
+ * @param maxLen max number of bytes of the text
+ * @param len [out] number of bytes of text fitting
+ * @param width [out] width in pixels of these bytes
+ */
+static void getButtonTextLen(const char *text,
+                             uint16_t    maxWidth,
+                             uint16_t    maxLen,
+                             uint16_t   *len,
+                             uint16_t   *width)
+{
+    nbgl_getTextMaxLenAndWidth(
+        BAGL_FONT_OPEN_SANS_EXTRABOLD_11px_1bpp, text, maxWidth, len, width, true);
+    // a button cannot contain more than the buffer used to display it
+    if (*len > maxLen) {
+        *len = maxLen;
+        // don't cut in the middle of an UTF-8 char
+        while ((*len > 0) && ((text[*len] & 0xC0) == 0x80)) {
+            (*len)--;
+        }
+        *width
+            = nbgl_getSingleLineTextWidthInLen(BAGL_FONT_OPEN_SANS_EXTRABOLD_11px_1bpp, text, *len);
+    }
+}
+
+/**
+ * @brief displays the given number of lines of the text of the given text area, the last line
+ * ending with an ellipsis. The text is not copied: the first lines are displayed by the given text
+ * area, the last line and the ellipsis by 2 other text areas, aligned under it
+ *
+ * @param layoutInt the current layout
+ * @param container container of the text areas
+ * @param textArea text area of the sub text, already set at index 1 of container
+ * @param nbLines number of lines of the sub text
+ * @param areaHeight height of the area in which the lines are vertically centered
+ */
+static void addTextWithEllipsis(nbgl_layoutInternal_t *layoutInt,
+                                nbgl_container_t      *container,
+                                nbgl_text_area_t      *textArea,
+                                uint8_t                nbLines,
+                                uint16_t               areaHeight)
+{
+    const char       *text          = textArea->text;
+    const uint16_t    lineHeight    = nbgl_getFontLineHeight(textArea->fontId);
+    const uint16_t    ellipsisWidth = nbgl_getTextWidth(textArea->fontId, ELLIPSIS);
+    nbgl_text_area_t *lastLineArea;
+    nbgl_text_area_t *ellipsisArea;
+    uint16_t          firstLinesLen = 0;
+    uint16_t          lastLineStart = 0;
+    uint16_t          lastLineLen   = 0;
+    uint16_t          lastLineWidth = 0;
+
+    // all lines but the last one are fully displayed by the given text area (empty if a single
+    // line), vertically centered with the last line in the area
+    if (nbLines > 1) {
+        nbgl_getTextMaxLenInNbLines(
+            textArea->fontId, text, AVAILABLE_WIDTH, nbLines - 1, &firstLinesLen, true);
+        // the '\n' ending these lines is not displayed
+        lastLineStart = (text[firstLinesLen] == '\n') ? (firstLinesLen + 1) : firstLinesLen;
+    }
+    // a len of 0 would mean the whole text, so nothing to display is a NULL text
+    if (firstLinesLen == 0) {
+        textArea->text = NULL;
+    }
+    textArea->len             = firstLinesLen;
+    textArea->nbMaxLines      = nbLines - 1;
+    textArea->obj.area.height = (nbLines - 1) * lineHeight;
+    textArea->obj.alignmentMarginY += (areaHeight - nbLines * lineHeight) / 2;
+
+    // the last line is displayed by another text area, under the first lines
+    lastLineArea              = (nbgl_text_area_t *) nbgl_objPoolGet(TEXT_AREA, layoutInt->layer);
+    lastLineArea->textColor   = WHITE;
+    lastLineArea->fontId      = textArea->fontId;
+    lastLineArea->obj.alignTo = (nbgl_obj_t *) textArea;
+    container->children[2]    = (nbgl_obj_t *) lastLineArea;
+    // the last line must leave room for the ellipsis
+    nbgl_getTextMaxLenAndWidth(textArea->fontId,
+                               &text[lastLineStart],
+                               AVAILABLE_WIDTH - ellipsisWidth,
+                               &lastLineLen,
+                               &lastLineWidth,
+                               true);
+    // the last line may be empty (if cut at an empty line), then only the ellipsis is displayed
+    lastLineArea->text            = (lastLineLen > 0) ? &text[lastLineStart] : NULL;
+    lastLineArea->len             = lastLineLen;
+    lastLineArea->nbMaxLines      = 1;
+    lastLineArea->wrapping        = false;
+    lastLineArea->textAlignment   = CENTER;
+    lastLineArea->obj.area.width  = lastLineWidth;
+    lastLineArea->obj.area.height = lineHeight;
+    lastLineArea->obj.alignment   = BOTTOM_MIDDLE;
+    // the last line and the ellipsis are horizontally centered together
+    lastLineArea->obj.alignmentMarginX = -(ellipsisWidth / 2);
+
+    // the ellipsis is on the right of the last line
+    ellipsisArea                = (nbgl_text_area_t *) nbgl_objPoolGet(TEXT_AREA, layoutInt->layer);
+    ellipsisArea->textColor     = WHITE;
+    ellipsisArea->text          = (const char *) PIC(ELLIPSIS);
+    ellipsisArea->fontId        = textArea->fontId;
+    ellipsisArea->textAlignment = CENTER;
+    ellipsisArea->obj.area.width  = ellipsisWidth;
+    ellipsisArea->obj.area.height = lineHeight;
+    ellipsisArea->obj.alignment   = MID_RIGHT;
+    ellipsisArea->obj.alignTo     = (nbgl_obj_t *) lastLineArea;
+    container->children[3]        = (nbgl_obj_t *) ellipsisArea;
+}
+
+/**
+ * @brief computes the part of the given text displayed in a single button in @ref BUTTON_INFO
+ * style. Used both to draw the buttons and to split the text in pages, so that they always match
+ *
+ * @param text text to display, starting at the beginning of the button
+ * @param len [out] number of bytes of text displayed in the button
+ * @param width [out] width in pixels of these bytes
+ * @return the number of bytes of text consumed by the button (always > 0 if text is not empty)
+ */
+uint16_t layoutGetButtonRowLen(const char *text, uint16_t *len, uint16_t *width)
+{
+    uint16_t consumed;
+
+    // the rest of the text goes in the next button
+    getButtonTextLen(
+        text, AVAILABLE_WIDTH - BUTTON_MARGIN_Y, NB_MAX_CHAR_IN_BUTTON_ROW - 1, len, width);
+    consumed = *len;
+    // a '\n' ending the button is consumed but not displayed
+    if (text[consumed] == '\n') {
+        consumed++;
+    }
+    // always consume at least one char, to be sure to progress in the text
+    if ((consumed == 0) && (text[0] != '\0')) {
+        consumed = 1;
+    }
+    return consumed;
 }
 
 /**
@@ -217,8 +352,8 @@ int nbgl_layoutAddNavigation(nbgl_layout_t *layout, nbgl_layoutNavigation_t *inf
  *
  * @param layout the current layout
  * @param text main text, must be single line if subText
- * @param subText description under main text (NULL terminated, in regular, 3 lines max, may be
- * null)
+ * @param subText description under main text (NULL terminated, in regular, 3 lines max, or 2
+ * buttons max in @ref BUTTON_INFO style, may be null)
  * @param style if @ref REGULAR_INFO, use regular font for text, otherwise use bold font for text
  * @return >= 0 if OK
  */
@@ -227,10 +362,45 @@ int nbgl_layoutAddText(nbgl_layout_t                  *layout,
                        const char                     *subText,
                        nbgl_contentCenteredInfoStyle_t style)
 {
+    // In BUTTON_INFO style, the sub text is displayed in at most 2 buttons, the last one ending
+    // with an ellipsis if it doesn't fit (the 3rd button is only used by steps, to split long texts
+    // in pages). Other sub texts are simply cut.
+    if (style == BUTTON_INFO) {
+        return layoutAddText(layout, text, subText, style, NB_MAX_BUTTON_ROWS_PUBLIC, true);
+    }
+    return layoutAddText(layout, text, subText, style, 0, false);
+}
+
+/**
+ * @brief Same as @ref nbgl_layoutAddText(), with the choice of the max number of lines (or buttons
+ * in @ref BUTTON_INFO style) of the sub text, and of the behavior when the sub text doesn't fit in
+ * them
+ *
+ * @param layout the current layout
+ * @param text main text, must be single line if subText
+ * @param subText description under main text (may be null)
+ * @param style if @ref REGULAR_INFO, use regular font for text, otherwise use bold font for text
+ * @param nbMaxLines max number of lines (or buttons in @ref BUTTON_INFO style) for the sub text. If
+ * 0, the max displayable number is used
+ * @param ellipsis if true, the last line (or button) ends with an ellipsis if the sub text doesn't
+ * fit, otherwise the remaining text is simply not displayed (it is displayed by the caller in
+ * another page)
+ * @return >= 0 if OK
+ */
+int layoutAddText(nbgl_layout_t                  *layout,
+                  const char                     *text,
+                  const char                     *subText,
+                  nbgl_contentCenteredInfoStyle_t style,
+                  uint8_t                         nbMaxLines,
+                  bool                            ellipsis)
+{
     nbgl_layoutInternal_t *layoutInt = (nbgl_layoutInternal_t *) layout;
     nbgl_container_t      *container;
     nbgl_text_area_t      *textArea;
     uint16_t               fullHeight = 0;
+    // max number of buttons in BUTTON_INFO style, or of lines in other styles, for the sub text
+    uint8_t  subTextMaxLines = 0;
+    uint16_t subTextNbLines  = 0;
 
     LOG_DEBUG(LAYOUT_LOGGER, "nbgl_layoutAddText():\n");
     if (layout == NULL) {
@@ -238,10 +408,27 @@ int nbgl_layoutAddText(nbgl_layout_t                  *layout,
     }
     container = (nbgl_container_t *) nbgl_objPoolGet(CONTAINER, layoutInt->layer);
 
-    // get container children
+    // get container children: main text, then sub text
     container->nbChildren = 1;
     if (subText != NULL) {
-        container->nbChildren += 2;  // possibly 2 buttons
+        if (style == BUTTON_INFO) {
+            subTextMaxLines = ((nbMaxLines > 0) && (nbMaxLines < NB_MAX_BUTTON_ROWS))
+                                  ? nbMaxLines
+                                  : NB_MAX_BUTTON_ROWS;
+            // possibly subTextMaxLines buttons
+            container->nbChildren += subTextMaxLines;
+        }
+        else {
+            // at most NB_MAX_LINES-1 lines are available on screen, under the main text
+            subTextMaxLines = ((nbMaxLines > 0) && (nbMaxLines < (NB_MAX_LINES - 1)))
+                                  ? nbMaxLines
+                                  : (NB_MAX_LINES - 1);
+            subTextNbLines  = nbgl_getTextNbLinesInWidth(
+                BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp, PIC(subText), AVAILABLE_WIDTH, true);
+            // a text area, plus 2 others (last line and ellipsis) if the sub text is cut with an
+            // ellipsis
+            container->nbChildren += ((subTextNbLines > subTextMaxLines) && ellipsis) ? 3 : 1;
+        }
     }
 
     container->children       = nbgl_containerPoolGet(container->nbChildren, layoutInt->layer);
@@ -282,12 +469,12 @@ int nbgl_layoutAddText(nbgl_layout_t                  *layout,
             textArea->wrapping  = true;
             textArea->fontId    = BAGL_FONT_OPEN_SANS_REGULAR_11px_1bpp;
             textArea->obj.area.width = AVAILABLE_WIDTH;
-            nbLines                  = nbgl_getTextNbLinesInWidth(
-                textArea->fontId, textArea->text, AVAILABLE_WIDTH, true);
-            // if more than available lines on screen
-            if (nbLines > (NB_MAX_LINES - 1)) {
+            nbLines                  = subTextNbLines;
+            // if more than available lines
+            bool truncated = (nbLines > subTextMaxLines);
+            if (truncated) {
                 uint16_t len;
-                nbLines              = NB_MAX_LINES - 1;
+                nbLines              = subTextMaxLines;
                 textArea->nbMaxLines = nbLines;
                 nbgl_getTextMaxLenInNbLines(
                     textArea->fontId, textArea->text, AVAILABLE_WIDTH, nbLines, &len, true);
@@ -305,82 +492,82 @@ int nbgl_layoutAddText(nbgl_layout_t                  *layout,
             textArea->obj.alignmentMarginY = 2;
             fullHeight += textArea->obj.area.height + textArea->obj.alignmentMarginY;
             container->children[1] = (nbgl_obj_t *) textArea;
+            if (truncated && ellipsis) {
+                // the end of the last line is replaced by an ellipsis
+                addTextWithEllipsis(
+                    layoutInt, container, textArea, nbLines, textArea->obj.area.height);
+            }
         }
         else {
-            nbgl_button_t *button = (nbgl_button_t *) nbgl_objPoolGet(BUTTON, layoutInt->layer);
-            uint16_t       textWidth;
-            uint16_t       len   = 0;
-            uint16_t       width = 0;
+            // vertical margin of each button, depending on the number of buttons
+            static const int16_t marginsY[NB_MAX_BUTTON_ROWS][NB_MAX_BUTTON_ROWS] = {
+                {8},
+                {8 - 7, 8 + 7},
+                {-8, 6, 20}
+            };
+            // the texts of the buttons are copied in the layout, so that they stay valid as long
+            // as the layout is displayed, whatever the given subText becomes
+            char(*buttonTexts)[NB_MAX_CHAR_IN_BUTTON_ROW] = layoutInt->buttonTexts;
+            nbgl_button_t *buttons[NB_MAX_BUTTON_ROWS];
+            const char    *rowText = (const char *) PIC(subText);
+            uint8_t        nbRows  = 0;
+            uint8_t        maxRows = subTextMaxLines;
 
-            button->foregroundColor = BLACK;
-            button->innerColor      = WHITE;
-            button->borderColor     = WHITE;
-            button->radius          = RADIUS_3_PIXELS;
-            button->text            = (const char *) PIC(subText);
-            button->fontId          = BAGL_FONT_OPEN_SANS_EXTRABOLD_11px_1bpp;
-            button->obj.area.height = 14;
-            button->obj.alignment   = CENTER;
+            // draw buttons under each other, each with the text remaining from the previous one
+            while ((rowText != NULL) && (nbRows < maxRows)) {
+                nbgl_button_t *button = (nbgl_button_t *) nbgl_objPoolGet(BUTTON, layoutInt->layer);
+                uint16_t       len    = 0;
+                uint16_t       width  = 0;
+                uint16_t       consumed;
 
-            textWidth = nbgl_getTextWidth(button->fontId, button->text);
-            if ((textWidth + BUTTON_MARGIN_Y) >= AVAILABLE_WIDTH) {
-                static char tmpString[NB_MAX_CHAR_IN_LINE];
-                nbgl_getTextMaxLenAndWidth(button->fontId,
-                                           button->text,
-                                           AVAILABLE_WIDTH - BUTTON_MARGIN_Y,
-                                           &len,
-                                           &width,
-                                           true);
-                button->obj.area.width = width + BUTTON_MARGIN_Y;
-                // copy the first 'len' chars in the tmp string buffer (max is
-                // NB_MAX_CHAR_IN_LINE-1)
-                memcpy(tmpString, button->text, MIN(len, (NB_MAX_CHAR_IN_LINE - 1)));
-                // NULL termination
-                tmpString[MIN(len, (NB_MAX_CHAR_IN_LINE - 1))] = '\0';
-                button->text                                   = PIC(tmpString);
-                button->obj.alignmentMarginY                   = 8 - 7;
-            }
-            else {
-                button->obj.area.width       = textWidth + BUTTON_MARGIN_Y;
-                button->obj.alignmentMarginY = 8;
-            }
-            container->children[1] = (nbgl_obj_t *) button;
+                button->foregroundColor = BLACK;
+                button->innerColor      = WHITE;
+                button->borderColor     = WHITE;
+                button->radius          = RADIUS_3_PIXELS;
+                button->text            = rowText;
+                button->fontId          = BAGL_FONT_OPEN_SANS_EXTRABOLD_11px_1bpp;
+                button->obj.area.height = 14;
+                button->obj.alignment   = CENTER;
 
-            // if too long text, draw a second button under the first one, with the remaining text
-            if (width > 0) {
-                button = (nbgl_button_t *) nbgl_objPoolGet(BUTTON, layoutInt->layer);
-                button->foregroundColor      = BLACK;
-                button->innerColor           = WHITE;
-                button->borderColor          = WHITE;
-                button->radius               = RADIUS_3_PIXELS;
-                button->text                 = (const char *) PIC(subText) + len;
-                button->fontId               = BAGL_FONT_OPEN_SANS_EXTRABOLD_11px_1bpp;
-                button->obj.area.height      = 14;
-                button->obj.alignment        = CENTER;
-                button->obj.alignmentMarginY = 8 + 7;
-                textWidth                    = nbgl_getTextWidth(button->fontId, button->text);
-                if ((textWidth + BUTTON_MARGIN_Y) >= AVAILABLE_WIDTH) {
-                    static char    tmpString2[NB_MAX_CHAR_IN_LINE];
+                consumed = layoutGetButtonRowLen(rowText, &len, &width);
+                if (ellipsis && (rowText[consumed] != '\0') && (nbRows == (maxRows - 1))) {
+                    // text remaining after the last button: end it with an ellipsis
                     const uint16_t ellipsisWidth = nbgl_getTextWidth(button->fontId, ELLIPSIS);
-                    nbgl_getTextMaxLenAndWidth(button->fontId,
-                                               button->text,
-                                               AVAILABLE_WIDTH - BUTTON_MARGIN_Y - ellipsisWidth,
-                                               &len,
-                                               &width,
-                                               true);
+                    getButtonTextLen(rowText,
+                                     AVAILABLE_WIDTH - BUTTON_MARGIN_Y - ellipsisWidth,
+                                     NB_MAX_CHAR_IN_BUTTON_ROW - ELLIPSIS_SIZE,
+                                     &len,
+                                     &width);
                     button->obj.area.width = width + ellipsisWidth + BUTTON_MARGIN_Y;
                     // copy the first 'len' chars then append ELLIPSIS (ELLIPSIS_SIZE includes '\0')
-                    uint16_t copyLen = MIN(len, (NB_MAX_CHAR_IN_LINE - ELLIPSIS_SIZE));
-                    memcpy(tmpString2, button->text, copyLen);
-                    memcpy(tmpString2 + copyLen, ELLIPSIS, ELLIPSIS_SIZE);
-                    button->text = PIC(tmpString2);
+                    // (len is already limited by getButtonTextLen(), MIN() makes it explicit)
+                    uint16_t copyLen = MIN(len, (NB_MAX_CHAR_IN_BUTTON_ROW - ELLIPSIS_SIZE));
+                    memcpy(buttonTexts[nbRows], rowText, copyLen);
+                    memcpy(buttonTexts[nbRows] + copyLen, ELLIPSIS, ELLIPSIS_SIZE);
+                    button->text = PIC(buttonTexts[nbRows]);
+                    rowText      = NULL;
                 }
                 else {
-                    button->obj.area.width = textWidth + BUTTON_MARGIN_Y;
+                    button->obj.area.width = width + BUTTON_MARGIN_Y;
+                    // copy the 'len' chars displayed in this button
+                    // (len is already limited by layoutGetButtonRowLen(), MIN() makes it explicit)
+                    uint16_t copyLen = MIN(len, (NB_MAX_CHAR_IN_BUTTON_ROW - 1));
+                    memcpy(buttonTexts[nbRows], rowText, copyLen);
+                    // NULL termination
+                    buttonTexts[nbRows][copyLen] = '\0';
+                    button->text                 = PIC(buttonTexts[nbRows]);
+                    // the remaining text goes in the next button
+                    rowText = (rowText[consumed] != '\0') ? (rowText + consumed) : NULL;
                 }
-                container->children[2] = (nbgl_obj_t *) button;
+                buttons[nbRows]                 = button;
+                container->children[1 + nbRows] = (nbgl_obj_t *) button;
+                nbRows++;
+            }
+            for (uint8_t i = 0; i < nbRows; i++) {
+                buttons[i]->obj.alignmentMarginY = marginsY[nbRows - 1][i];
             }
 
-            fullHeight += 44;
+            fullHeight += (nbRows == NB_MAX_BUTTON_ROWS) ? 48 : 44;
         }
     }
     container->obj.area.height = fullHeight;

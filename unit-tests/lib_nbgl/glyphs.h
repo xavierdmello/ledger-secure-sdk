@@ -15,6 +15,7 @@ extern const nbgl_icon_details_t C_Check_Circle_64px;
 extern const nbgl_icon_details_t C_Chevron_40px;
 extern const nbgl_icon_details_t C_Close_40px;
 extern const nbgl_icon_details_t C_Info_40px;
+extern const nbgl_icon_details_t C_Mini_Push_40px;
 extern const nbgl_icon_details_t C_Settings_40px;
 extern const nbgl_icon_details_t C_Denied_Circle_64px;
 extern const nbgl_icon_details_t C_Important_Circle_64px;

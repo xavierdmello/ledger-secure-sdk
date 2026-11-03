@@ -7,6 +7,7 @@
 
 #include "nbgl_use_case.h"
 #include "nbgl_page.h"
+#include "nbgl_layout_internal.h"
 #include "os_io_seph_cmd.h"
 #include "glyphs.h"
 
@@ -36,6 +37,7 @@ const nbgl_icon_details_t C_Chevron_40px;
 const nbgl_icon_details_t C_Denied_Circle_64px;
 const nbgl_icon_details_t C_Important_Circle_64px;
 const nbgl_icon_details_t C_Info_40px;
+const nbgl_icon_details_t C_Mini_Push_40px;
 const nbgl_icon_details_t C_Privacy_40px;
 const nbgl_icon_details_t C_QRCode_40px;
 const nbgl_icon_details_t C_Search_40px;
@@ -67,17 +69,25 @@ int nbgl_pageRelease(nbgl_page_t *page)
     return 0;
 }
 
+// modal pages (the details of a TAG_VALUE_LIST_ALIAS alias) are only expected when this is true
+static bool                       modal_pages_expected;
+static nbgl_layoutTouchCallback_t modal_callback;
+static nbgl_pageNavigationInfo_t  modal_nav;
+static nbgl_pageContent_t         modal_content;
+
 nbgl_page_t *nbgl_pageDrawGenericContentExt(nbgl_layoutTouchCallback_t       onActionCallback,
                                             const nbgl_pageNavigationInfo_t *nav,
                                             nbgl_pageContent_t              *content,
                                             bool                             modal)
 {
-    (void) onActionCallback;
-    (void) nav;
-    (void) content;
     (void) modal;
-    TEST_FAIL_MESSAGE("unexpected call to nbgl_pageDrawGenericContentExt");
-    return NULL;
+    if (!modal_pages_expected) {
+        TEST_FAIL_MESSAGE("unexpected call to nbgl_pageDrawGenericContentExt");
+    }
+    modal_callback = onActionCallback;
+    memcpy(&modal_nav, nav, sizeof(modal_nav));
+    memcpy(&modal_content, content, sizeof(modal_content));
+    return (nbgl_page_t *) &page_dummy;
 }
 
 nbgl_page_t *nbgl_pageDrawConfirmation(nbgl_layoutTouchCallback_t                onActionCallback,
@@ -256,8 +266,58 @@ UNUSED_LAYOUT_FUNC(UpdateSpinner,
                    uint8_t        position)
 
 // ============================================================================
-// NBGL fonts/screen and OS stubs: every text fits on a single line
+// NBGL fonts/screen and OS stubs: every text fits on a single line, except LONG_VALUE, and
+// WIDER_IN_BOLD in the small bold font
 // ============================================================================
+
+// a value too long to fit in a review page
+static const char LONG_VALUE[] = "long value";
+#define LONG_VALUE_NB_LINES (NB_MAX_LINES_IN_REVIEW + 5)
+// a value fitting in a single line in the regular font, but on 2 lines in the small bold font
+static const char WIDER_IN_BOLD[] = "wider in bold";
+// a value fitting in a single line in the small fonts, but on 3 lines in the large font
+static const char TALLER_IN_LARGE[] = "taller in large";
+// a value displayed in many pages of the "More" details modal. Any text starting in it is split in
+// lines of a number of chars depending on the font, like real fonts (fewer chars in bold)
+#define MORE_VALUE_LEN 1500
+static char MORE_VALUE[MORE_VALUE_LEN + 1];
+
+static bool isInMoreValue(const char *text)
+{
+    return (text >= MORE_VALUE) && (text < &MORE_VALUE[MORE_VALUE_LEN]);
+}
+
+static uint16_t getNbCharsPerLine(nbgl_font_id_e fontId)
+{
+    if (fontId == SMALL_BOLD_FONT) {
+        return 20;
+    }
+    if (fontId == SMALL_REGULAR_FONT) {
+        return 24;
+    }
+    return 18;
+}
+
+static uint16_t getTextNbLines(nbgl_font_id_e fontId, const char *text)
+{
+    if (text == NULL) {
+        return 1;
+    }
+    if (isInMoreValue(text)) {
+        uint16_t nbChars = getNbCharsPerLine(fontId);
+        return (strlen(text) + nbChars - 1) / nbChars;
+    }
+    if (strcmp(text, LONG_VALUE) == 0) {
+        return LONG_VALUE_NB_LINES;
+    }
+    if ((strcmp(text, WIDER_IN_BOLD) == 0) && (fontId == SMALL_BOLD_FONT)) {
+        return 2;
+    }
+    if ((strcmp(text, TALLER_IN_LARGE) == 0) && (fontId == LARGE_MEDIUM_FONT)) {
+        return 3;
+    }
+    return 1;
+}
 
 uint8_t nbgl_getFontLineHeight(nbgl_font_id_e fontId)
 {
@@ -270,11 +330,9 @@ uint16_t nbgl_getTextHeightInWidth(nbgl_font_id_e fontId,
                                    uint16_t       maxWidth,
                                    bool           wrapping)
 {
-    (void) fontId;
-    (void) text;
     (void) maxWidth;
     (void) wrapping;
-    return TEXT_HEIGHT;
+    return getTextNbLines(fontId, text) * TEXT_HEIGHT;
 }
 
 uint16_t nbgl_getTextNbLinesInWidth(nbgl_font_id_e fontId,
@@ -282,11 +340,9 @@ uint16_t nbgl_getTextNbLinesInWidth(nbgl_font_id_e fontId,
                                     uint16_t       maxWidth,
                                     bool           wrapping)
 {
-    (void) fontId;
-    (void) text;
     (void) maxWidth;
     (void) wrapping;
-    return 1;
+    return getTextNbLines(fontId, text);
 }
 
 bool nbgl_getTextMaxLenInNbLines(nbgl_font_id_e fontId,
@@ -296,11 +352,12 @@ bool nbgl_getTextMaxLenInNbLines(nbgl_font_id_e fontId,
                                  uint16_t      *len,
                                  bool           wrapping)
 {
-    (void) fontId;
     (void) maxWidth;
-    (void) maxNbLines;
     (void) wrapping;
     *len = strlen(text);
+    if (isInMoreValue(text) && (*len > (maxNbLines * getNbCharsPerLine(fontId)))) {
+        *len = maxNbLines * getNbCharsPerLine(fontId);
+    }
     return true;
 }
 
@@ -446,6 +503,8 @@ void setUp(void)
     modal_header_text     = NULL;
     nb_bars               = 0;
     layout_top_right_icon = NULL;
+    modal_pages_expected  = false;
+    modal_callback        = NULL;
     nb_choices            = 0;
     last_choice           = false;
     nb_rejects            = 0;
@@ -1131,6 +1190,392 @@ void test_predefined_warning_takes_precedence_over_custom_fields(void)
     }
 }
 
+// ============================================================================
+// nbMaxLinesForValue of the pairs: a value with a max number of lines is counted with its
+// truncated height to split the pages, so it shares its page and never needs a "More" page
+// ============================================================================
+
+#define NB_PAIRS_WITH_LONG_VALUE 3
+
+// the max number of lines of a pair is in the bit-field byte of the pair, so the size of the
+// public structure is unchanged: 3 pointers + the bit-field byte (padded)
+_Static_assert(sizeof(nbgl_contentTagValue_t) == (4 * sizeof(void *)),
+               "nbgl_contentTagValue_t size changed");
+
+// Builds a TAG_VALUE_LIST of NB_PAIRS_WITH_LONG_VALUE pairs, the first one with LONG_VALUE
+static void buildListWithLongValue(uint8_t pairMaxLines,
+                                   uint8_t listMaxLines,
+                                   bool    alias,
+                                   bool    withCallback)
+{
+    memset(pairs, 0, NB_PAIRS * sizeof(nbgl_contentTagValue_t));
+    for (uint8_t i = 0; i < NB_PAIRS_WITH_LONG_VALUE; i++) {
+        pairs[i].item  = items[i];
+        pairs[i].value = aliases[i];
+    }
+    pairs[0].value              = LONG_VALUE;
+    pairs[0].nbMaxLinesForValue = pairMaxLines;
+    if (alias) {
+        pairs[0].aliasValue = 1;
+        pairs[0].extension  = &extensions[0];
+    }
+
+    memset(&content, 0, sizeof(content));
+    content.type                                    = TAG_VALUE_LIST;
+    content.content.tagValueList.nbPairs            = NB_PAIRS_WITH_LONG_VALUE;
+    content.content.tagValueList.nbMaxLinesForValue = listMaxLines;
+    if (withCallback) {
+        content.content.tagValueList.callback   = getPair;
+        content.content.tagValueList.startIndex = callbackBase;
+    }
+    else {
+        content.content.tagValueList.pairs = pairs;
+    }
+
+    contents.callbackCallNeeded = false;
+    contents.contentsList       = &content;
+    contents.nbContents         = 1;
+}
+
+// Returns the number of pages of the given list, split by the public helper used by applications
+static uint8_t getNbPagesWithPublicHelper(const nbgl_contentTagValueList_t *tagValueList)
+{
+    uint8_t nbPages = 0;
+    uint8_t i       = 0;
+    bool    flag;
+
+    while (i < tagValueList->nbPairs) {
+        i += nbgl_useCaseGetNbTagValuesInPage(tagValueList->nbPairs - i, tagValueList, i, &flag);
+        nbPages++;
+    }
+    return nbPages;
+}
+
+// Checks that the long value shares its page with the other pairs, without "More" button
+static void checkLongValueSharesItsPage(uint8_t pairMaxLines,
+                                        uint8_t listMaxLines,
+                                        bool    alias,
+                                        bool    withCallback)
+{
+    buildListWithLongValue(pairMaxLines, listMaxLines, alias, withCallback);
+    TEST_ASSERT_EQUAL_UINT8(1, getNbPagesWithPublicHelper(&content.content.tagValueList));
+
+    nbgl_useCaseGenericReview(&contents, "Reject", onReject);
+    TEST_ASSERT_EQUAL(TAG_VALUE_LIST, page_content.type);
+    TEST_ASSERT_EQUAL_UINT8(NB_PAIRS_WITH_LONG_VALUE, page_content.tagValueList.nbPairs);
+}
+
+// Checks that the long value is alone in its page, with a "More" button, as without max
+static void checkLongValueUsesDetailsPage(uint8_t listMaxLines, bool withCallback)
+{
+    buildListWithLongValue(0, listMaxLines, false, withCallback);
+    TEST_ASSERT_EQUAL_UINT8(2, getNbPagesWithPublicHelper(&content.content.tagValueList));
+
+    nbgl_useCaseGenericReview(&contents, "Reject", onReject);
+    TEST_ASSERT_EQUAL(TAG_VALUE_DETAILS, page_content.type);
+    TEST_ASSERT_EQUAL_UINT8(1, page_content.tagValueDetails.tagValueList.nbPairs);
+    TEST_ASSERT_EQUAL_UINT8(NB_MAX_LINES_IN_REVIEW,
+                            page_content.tagValueDetails.tagValueList.nbMaxLinesForValue);
+}
+
+void test_pair_max_lines_shares_page(void)
+{
+    for (uint8_t withCallback = 0; withCallback < 2; withCallback++) {
+        for (uint8_t maxLines = 1; maxLines <= 3; maxLines++) {
+            checkLongValueSharesItsPage(maxLines, 0, false, withCallback);
+            checkLongValueSharesItsPage(maxLines, 0, true, withCallback);
+            // the smallest of the list and pair max is used
+            checkLongValueSharesItsPage(maxLines, NB_MAX_LINES_IN_REVIEW, false, withCallback);
+        }
+    }
+}
+
+void test_no_pair_max_lines_uses_details_page(void)
+{
+    for (uint8_t withCallback = 0; withCallback < 2; withCallback++) {
+        checkLongValueUsesDetailsPage(0, withCallback);
+        // a list max smaller than NB_MAX_LINES_IN_REVIEW is overridden by the review, so it
+        // changes nothing
+        checkLongValueUsesDetailsPage(2, withCallback);
+    }
+}
+
+// ============================================================================
+// Details of a TAG_VALUE_LIST_ALIAS alias: the pairs of each modal page must fit in the page, with
+// the font used to draw them (small bold for values), in which their values take 2 lines
+// ============================================================================
+
+#define NB_ALIAS_LIST_PAIRS 8
+
+static nbgl_contentTagValue_t     aliasListPairs[NB_ALIAS_LIST_PAIRS];
+static nbgl_contentTagValueList_t aliasList;
+
+// Builds a list of NB_ALIAS_LIST_PAIRS alias pairs with WIDER_IN_BOLD values, to be changed by
+// the caller before calling openAliasListModal()
+static void buildAliasList(void)
+{
+    memset(aliasListPairs, 0, sizeof(aliasListPairs));
+    for (uint8_t i = 0; i < NB_ALIAS_LIST_PAIRS; i++) {
+        aliasListPairs[i].item       = items[i];
+        aliasListPairs[i].value      = WIDER_IN_BOLD;
+        aliasListPairs[i].aliasValue = 1;
+    }
+    memset(&aliasList, 0, sizeof(aliasList));
+    aliasList.pairs   = aliasListPairs;
+    aliasList.nbPairs = NB_ALIAS_LIST_PAIRS;
+}
+
+// Starts a review whose first pair has the alias list as alias, and touches this alias
+static void openAliasListModal(void)
+{
+    buildList(NB_PAIRS, false);
+    extensions[0].aliasType    = TAG_VALUE_LIST_ALIAS;
+    extensions[0].tagValuelist = &aliasList;
+    nbgl_useCaseGenericReview(&contents, "Reject", onReject);
+    modal_pages_expected = true;
+    touchAlias(0);
+    TEST_ASSERT_NOT_NULL(modal_callback);
+}
+
+// Goes through all modal pages, checking that each page contains at least one pair and that all
+// pairs are displayed once. If pairHeight is not 0, also checks that the pairs fit in each page
+static void checkAliasListModalPages(uint16_t pairHeight)
+{
+    uint8_t nbPairsDrawn = 0;
+    for (uint8_t page = 0; page < modal_nav.nbPages; page++) {
+        uint8_t nbPairs = modal_content.tagValueList.nbPairs;
+        TEST_ASSERT_EQUAL(TAG_VALUE_LIST, modal_content.type);
+        TEST_ASSERT_EQUAL_PTR(&aliasListPairs[nbPairsDrawn], modal_content.tagValueList.pairs);
+        TEST_ASSERT_GREATER_THAN_UINT8(0, nbPairs);
+        if (pairHeight > 0) {
+            TEST_ASSERT_LESS_THAN_UINT16(TAG_VALUE_AREA_HEIGHT,
+                                         PRE_TAG_VALUE_MARGIN + nbPairs * pairHeight
+                                             + (nbPairs - 1) * INTER_TAG_VALUE_MARGIN);
+        }
+        nbPairsDrawn += nbPairs;
+        if ((page + 1) < modal_nav.nbPages) {
+            modal_callback(modal_nav.navWithButtons.navToken, page + 1);
+        }
+    }
+    TEST_ASSERT_EQUAL_UINT8(NB_ALIAS_LIST_PAIRS, nbPairsDrawn);
+}
+
+void test_alias_list_modal_pages_fit(void)
+{
+    buildAliasList();
+    openAliasListModal();
+    // height of a pair as drawn: tag, space, and value on 2 lines
+    checkAliasListModalPages(TEXT_HEIGHT + TAG_VALUE_INTERVALE + 2 * TEXT_HEIGHT);
+}
+
+void test_alias_list_modal_pair_too_long_has_its_page(void)
+{
+    // a pair too long to fit in a modal page is displayed alone in its page, it doesn't make the
+    // modal pages empty
+    buildAliasList();
+    aliasListPairs[0].value = LONG_VALUE;
+    openAliasListModal();
+    TEST_ASSERT_EQUAL_UINT8(1, modal_content.tagValueList.nbPairs);
+    // its value is truncated to the max number of lines fitting in the page, with "..."
+    uint8_t        nbLines   = modal_content.tagValueList.nbMaxLinesForValue;
+    const uint16_t tagHeight = PRE_TAG_VALUE_MARGIN + TEXT_HEIGHT + TAG_VALUE_INTERVALE;
+    TEST_ASSERT_GREATER_THAN_UINT8(0, nbLines);
+    TEST_ASSERT_LESS_THAN_UINT8(LONG_VALUE_NB_LINES, nbLines);
+    TEST_ASSERT_TRUE(modal_content.tagValueList.hideEndOfLastLine);
+    TEST_ASSERT_LESS_THAN_UINT16(TAG_VALUE_AREA_HEIGHT, tagHeight + nbLines * TEXT_HEIGHT);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT16(TAG_VALUE_AREA_HEIGHT,
+                                        tagHeight + (nbLines + 1) * TEXT_HEIGHT);
+    checkAliasListModalPages(0);
+}
+
+static nbgl_contentTagValue_t *getAliasListPair(uint8_t pairIndex)
+{
+    return &aliasListPairs[pairIndex];
+}
+
+void test_alias_list_modal_with_callback_pair_too_long(void)
+{
+    // the details of an alias list using a callback are not drawn (empty pages): pairs too long
+    // to fit in a page must not be read through the NULL pairs, in any page
+    buildAliasList();
+    aliasListPairs[0].value = LONG_VALUE;
+    aliasListPairs[1].value = LONG_VALUE;
+    aliasList.pairs         = NULL;
+    aliasList.callback      = getAliasListPair;
+    openAliasListModal();
+    TEST_ASSERT_GREATER_THAN_UINT8(2, modal_nav.nbPages);
+    for (uint8_t page = 0; page < modal_nav.nbPages; page++) {
+        if (page > 0) {
+            modal_callback(modal_nav.navWithButtons.navToken, page);
+        }
+        TEST_ASSERT_EQUAL(TAG_VALUE_LIST, modal_content.type);
+        TEST_ASSERT_NULL(modal_content.tagValueList.pairs);
+        TEST_ASSERT_EQUAL_UINT8(0, modal_content.tagValueList.nbMaxLinesForValue);
+        if (page < 2) {
+            // each too long pair is alone in its page
+            TEST_ASSERT_EQUAL_UINT8(1, modal_content.tagValueList.nbPairs);
+        }
+    }
+}
+
+// ============================================================================
+// Review pages are split with the font used to draw their values
+// ============================================================================
+
+// Builds a list of NB_PAIRS pairs with the given value, and smallCaseForValue set to true
+static void buildSmallCaseList(nbgl_contentType_t type, const char *value)
+{
+    nbgl_contentTagValueList_t *list;
+
+    memset(pairs, 0, NB_PAIRS * sizeof(nbgl_contentTagValue_t));
+    for (uint8_t i = 0; i < NB_PAIRS; i++) {
+        pairs[i].item  = items[i];
+        pairs[i].value = value;
+    }
+    memset(&content, 0, sizeof(content));
+    content.type = type;
+    if (type == TAG_VALUE_CONFIRM) {
+        list = &content.content.tagValueConfirm.tagValueList;
+        content.content.tagValueConfirm.confirmationText  = "Confirm";
+        content.content.tagValueConfirm.confirmationToken = CONFIRMATION_TOKEN;
+    }
+    else {
+        list = &content.content.tagValueList;
+    }
+    list->pairs             = pairs;
+    list->nbPairs           = NB_PAIRS;
+    list->smallCaseForValue = true;
+
+    contents.callbackCallNeeded = false;
+    contents.contentsList       = &content;
+    contents.nbContents         = 1;
+}
+
+// Goes through the pages of the review, checking that they are drawn with the given
+// smallCaseForValue, that pairs of the given height fit in each page, and that all pairs are
+// displayed
+static void checkReviewPagesFit(bool smallCaseDrawn, uint16_t pairHeight)
+{
+    uint8_t nbPairsDrawn = 0;
+
+    nbgl_useCaseGenericReview(&contents, "Reject", onReject);
+    for (uint8_t page = 0; nbPairsDrawn < NB_PAIRS; page++) {
+        const nbgl_contentTagValueList_t *list;
+        TEST_ASSERT_LESS_THAN_UINT8(page_nav.nbPages, page);
+        if (page > 0) {
+            page_callback(page_nav.navWithButtons.navToken, page);
+        }
+        list = (page_content.type == TAG_VALUE_CONFIRM) ? &page_content.tagValueConfirm.tagValueList
+                                                        : &page_content.tagValueList;
+        TEST_ASSERT_EQUAL(smallCaseDrawn, list->smallCaseForValue);
+        TEST_ASSERT_GREATER_THAN_UINT8(0, list->nbPairs);
+        TEST_ASSERT_LESS_THAN_UINT16(TAG_VALUE_AREA_HEIGHT,
+                                     PRE_TAG_VALUE_MARGIN + list->nbPairs * pairHeight
+                                         + (list->nbPairs - 1) * INTER_TAG_VALUE_MARGIN);
+        nbPairsDrawn += list->nbPairs;
+    }
+    TEST_ASSERT_EQUAL_UINT8(NB_PAIRS, nbPairsDrawn);
+}
+
+void test_review_list_pages_split_with_drawn_font(void)
+{
+    // a TAG_VALUE_LIST is drawn with the large font, whatever smallCaseForValue
+    buildSmallCaseList(TAG_VALUE_LIST, TALLER_IN_LARGE);
+    checkReviewPagesFit(false, TEXT_HEIGHT + TAG_VALUE_INTERVALE + 3 * TEXT_HEIGHT);
+}
+
+void test_review_confirm_pages_split_with_drawn_font(void)
+{
+    // a TAG_VALUE_CONFIRM is drawn with its smallCaseForValue, so with the small bold font
+    buildSmallCaseList(TAG_VALUE_CONFIRM, WIDER_IN_BOLD);
+    checkReviewPagesFit(true, TEXT_HEIGHT + TAG_VALUE_INTERVALE + 2 * TEXT_HEIGHT);
+}
+
+// ============================================================================
+// "More" details modal: its pages are counted with the font used to display them, so the last page
+// displays the end of the value, and going back displays the same pages as going forward
+// ============================================================================
+
+void test_more_details_pages_show_whole_value(void)
+{
+    const char *pagesStart[UINT8_MAX];
+    uint8_t     nbPages;
+
+    memset(MORE_VALUE, 'A', MORE_VALUE_LEN);
+    MORE_VALUE[MORE_VALUE_LEN] = '\0';
+    // a single pair with this value, too long for a review page: it has a "More" button
+    memset(pairs, 0, NB_PAIRS * sizeof(nbgl_contentTagValue_t));
+    pairs[0].item  = items[0];
+    pairs[0].value = MORE_VALUE;
+    memset(&content, 0, sizeof(content));
+    content.type                         = TAG_VALUE_LIST;
+    content.content.tagValueList.pairs   = pairs;
+    content.content.tagValueList.nbPairs = 1;
+    contents.callbackCallNeeded          = false;
+    contents.contentsList                = &content;
+    contents.nbContents                  = 1;
+    nbgl_useCaseGenericReview(&contents, "Reject", onReject);
+    TEST_ASSERT_EQUAL(TAG_VALUE_DETAILS, page_content.type);
+
+    modal_pages_expected = true;
+    page_callback(page_content.tagValueDetails.detailsButtonToken, 0);
+    TEST_ASSERT_NOT_NULL(modal_callback);
+    nbPages = modal_nav.nbPages;
+    TEST_ASSERT_GREATER_THAN_UINT8(1, nbPages);
+
+    // forward: every page but the last one is cut, the last one displays the end of the value
+    for (uint8_t page = 0; page < nbPages; page++) {
+        if (page > 0) {
+            modal_callback(modal_nav.navWithButtons.navToken, page);
+        }
+        pagesStart[page] = modal_content.tagValueList.pairs[0].value;
+        TEST_ASSERT_TRUE(isInMoreValue(pagesStart[page]));
+        if (page < (nbPages - 1)) {
+            TEST_ASSERT_EQUAL_UINT8(NB_MAX_LINES_IN_DETAILS,
+                                    modal_content.tagValueList.nbMaxLinesForValue);
+        }
+        else {
+            TEST_ASSERT_EQUAL_UINT8(0, modal_content.tagValueList.nbMaxLinesForValue);
+            TEST_ASSERT_LESS_OR_EQUAL_UINT16(
+                NB_MAX_LINES_IN_DETAILS * getNbCharsPerLine(SMALL_BOLD_FONT),
+                strlen(pagesStart[page]));
+        }
+    }
+    // backward: the same pages
+    for (int page = nbPages - 2; page >= 0; page--) {
+        modal_callback(modal_nav.navWithButtons.navToken, page);
+        TEST_ASSERT_EQUAL_PTR(pagesStart[page], modal_content.tagValueList.pairs[0].value);
+    }
+}
+
+// ============================================================================
+// Max number of lines of a value: the smallest of the list and pair ones, and a value of a pair
+// with a max always ends with "..." if it doesn't fit, whichever max cuts it
+// ============================================================================
+
+void test_tag_value_max_lines(void)
+{
+    nbgl_contentTagValue_t pair = {0};
+    bool                   forceEllipsis;
+
+    // no max for the pair: the list one is used, with the ellipsis setting of the list
+    TEST_ASSERT_EQUAL_UINT8(0, layoutGetTagValueMaxLines(0, &pair, &forceEllipsis));
+    TEST_ASSERT_FALSE(forceEllipsis);
+    TEST_ASSERT_EQUAL_UINT8(5, layoutGetTagValueMaxLines(5, &pair, &forceEllipsis));
+    TEST_ASSERT_FALSE(forceEllipsis);
+
+    pair.nbMaxLinesForValue = 3;
+    TEST_ASSERT_EQUAL_UINT8(3, layoutGetTagValueMaxLines(0, &pair, &forceEllipsis));
+    TEST_ASSERT_TRUE(forceEllipsis);
+    TEST_ASSERT_EQUAL_UINT8(3, layoutGetTagValueMaxLines(5, &pair, &forceEllipsis));
+    TEST_ASSERT_TRUE(forceEllipsis);
+    // the list max is smaller: it cuts the value, still with an ellipsis
+    TEST_ASSERT_EQUAL_UINT8(2, layoutGetTagValueMaxLines(2, &pair, &forceEllipsis));
+    TEST_ASSERT_TRUE(forceEllipsis);
+    // forceEllipsis is optional
+    TEST_ASSERT_EQUAL_UINT8(2, layoutGetTagValueMaxLines(2, &pair, NULL));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1166,5 +1611,14 @@ int main(void)
     RUN_TEST(test_no_warning_no_review_details_button);
     RUN_TEST(test_predefined_warning_without_custom_fields);
     RUN_TEST(test_predefined_warning_takes_precedence_over_custom_fields);
+    RUN_TEST(test_pair_max_lines_shares_page);
+    RUN_TEST(test_no_pair_max_lines_uses_details_page);
+    RUN_TEST(test_alias_list_modal_pages_fit);
+    RUN_TEST(test_alias_list_modal_pair_too_long_has_its_page);
+    RUN_TEST(test_alias_list_modal_with_callback_pair_too_long);
+    RUN_TEST(test_review_list_pages_split_with_drawn_font);
+    RUN_TEST(test_review_confirm_pages_split_with_drawn_font);
+    RUN_TEST(test_more_details_pages_show_whole_value);
+    RUN_TEST(test_tag_value_max_lines);
     return UNITY_END();
 }

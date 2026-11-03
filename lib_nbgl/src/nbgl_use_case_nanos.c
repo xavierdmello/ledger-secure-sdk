@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include "nbgl_debug.h"
 #include "nbgl_use_case.h"
+#include "nbgl_step_internal.h"
 #include "glyphs.h"
 #include "os_pic.h"
 #include "os_print.h"
@@ -177,6 +178,7 @@ typedef struct PageContent_s {
     bool                          bottomIcon;  ///< if set alongside @ref icon, render the icon at
                                                ///< the bottom of the screen instead of above the
                                                ///< texts; forwarded to nbgl_layoutCenteredInfo_t
+    uint8_t nbMaxLinesForSubText;  ///< if > 0, subText is truncated to this number of lines
 } PageContent_t;
 
 typedef struct ReviewWithWarningContext_s {
@@ -526,7 +528,8 @@ static void getPairData(const nbgl_contentTagValueList_t *tagValueList,
                         const char                      **value,
                         const nbgl_contentValueExt_t    **extension,
                         const nbgl_icon_details_t       **icon,
-                        bool                             *isCenteredInfo)
+                        bool                             *isCenteredInfo,
+                        uint8_t                          *nbMaxLinesForValue)
 {
     static nbgl_contentTagValue_t emptyPair;
     const nbgl_contentTagValue_t *pair;
@@ -557,6 +560,10 @@ static void getPairData(const nbgl_contentTagValueList_t *tagValueList,
     }
     else {
         *extension = NULL;
+    }
+    if (nbMaxLinesForValue != NULL) {
+        // not used if the pair is drawn as a centered info (see drawStep())
+        *nbMaxLinesForValue = pair->nbMaxLinesForValue;
     }
 }
 
@@ -647,10 +654,12 @@ static void onSwitchAction(void)
     }
 }
 
+// nbMaxLinesForSubTxt: if > 0, subTxt is truncated to this number of lines, in a single page
 static void drawStep(nbgl_stepPosition_t        pos,
                      const nbgl_icon_details_t *icon,
                      const char                *txt,
                      const char                *subTxt,
+                     uint8_t                    nbMaxLinesForSubTxt,
                      nbgl_stepButtonCallback_t  onActionCallback,
                      bool                       modal,
                      ForcedType_t               forcedType,
@@ -715,7 +724,8 @@ static void drawStep(nbgl_stepPosition_t        pos,
         else {
             style = REGULAR_INFO;
         }
-        newStep = nbgl_stepDrawText(pos, onActionCallback, p_ticker, txt, subTxt, style, modal);
+        newStep = stepDrawText(
+            pos, onActionCallback, p_ticker, txt, subTxt, style, modal, nbMaxLinesForSubTxt);
     }
     else {
         nbgl_layoutCenteredInfo_t info = {0};
@@ -1092,6 +1102,7 @@ static void displayExtensionStep(nbgl_stepPosition_t pos)
     const nbgl_contentInfoList_t     *infoList     = NULL;
     const char                       *text         = NULL;
     const char                       *subText      = NULL;
+    uint8_t                           nbMaxLines   = 0;
 
     if (context.review.extensionStepCtx != NULL) {
         nbgl_stepRelease(context.review.extensionStepCtx);
@@ -1136,13 +1147,16 @@ static void displayExtensionStep(nbgl_stepPosition_t pos)
                 tagValueList = context.review.extension->tagValuelist;
                 text         = PIC(tagValueList->pairs[context.review.currentExtensionPage].item);
                 subText      = PIC(tagValueList->pairs[context.review.currentExtensionPage].value);
+                // these values are tag/value pairs, so their max number of lines applies
+                nbMaxLines
+                    = tagValueList->pairs[context.review.currentExtensionPage].nbMaxLinesForValue;
                 break;
             default:
                 break;
         }
         if (text != NULL) {
-            context.review.extensionStepCtx = nbgl_stepDrawText(
-                pos, extensionNavigate, NULL, text, subText, BOLD_TEXT1_INFO, true);
+            context.review.extensionStepCtx = stepDrawText(
+                pos, extensionNavigate, NULL, text, subText, BOLD_TEXT1_INFO, true, nbMaxLines);
         }
     }
     else if (context.review.currentExtensionPage == (context.review.nbExtensionPages - 1)) {
@@ -1170,7 +1184,8 @@ static void displayAliasFullValue(void)
                 &subText,
                 &context.review.extension,
                 &icon,
-                &isCenteredInfo);
+                &isCenteredInfo,
+                NULL);
     if (context.review.extension == NULL) {
         // probably an error
         LOG_WARN(USE_CASE_LOGGER,
@@ -1293,6 +1308,7 @@ static void displayReviewPage(nbgl_stepPosition_t pos)
     uint8_t                       rejectIndex  = 255;
     const nbgl_contentValueExt_t *extension    = NULL;
     ForcedType_t                  forcedType   = NO_FORCED_TYPE;
+    uint8_t                       nbMaxLines   = 0;
 
     context.stepCallback = NULL;
 
@@ -1368,7 +1384,8 @@ static void displayReviewPage(nbgl_stepPosition_t pos)
                     &subText,
                     &extension,
                     &icon,
-                    &isCenteredInfo);
+                    &isCenteredInfo,
+                    &nbMaxLines);
         if (extension != NULL) {
             context.stepCallback                = displayAliasFullValue;
             context.review.currentTagValueIndex = pairIndex;
@@ -1381,7 +1398,7 @@ static void displayReviewPage(nbgl_stepPosition_t pos)
         }
     }
 
-    drawStep(pos, icon, text, subText, reviewCallback, false, forcedType, false);
+    drawStep(pos, icon, text, subText, nbMaxLines, reviewCallback, false, forcedType, false);
     nbgl_refresh();
 }
 
@@ -1396,6 +1413,7 @@ static void displayStreamingReviewPage(nbgl_stepPosition_t pos)
     uint8_t                       subIndex    = 255;
     const nbgl_contentValueExt_t *extension   = NULL;
     ForcedType_t                  forcedType  = NO_FORCED_TYPE;
+    uint8_t                       nbMaxLines  = 0;
 
     context.stepCallback = NULL;
     switch (context.type) {
@@ -1454,7 +1472,8 @@ static void displayStreamingReviewPage(nbgl_stepPosition_t pos)
                         &subText,
                         &extension,
                         &icon,
-                        &isCenteredInfo);
+                        &isCenteredInfo,
+                        &nbMaxLines);
             if (extension != NULL) {
                 forcedType = FORCE_BUTTON;
             }
@@ -1478,7 +1497,8 @@ static void displayStreamingReviewPage(nbgl_stepPosition_t pos)
             break;
     }
 
-    drawStep(pos, icon, text, subText, streamingReviewCallback, false, forcedType, false);
+    drawStep(
+        pos, icon, text, subText, nbMaxLines, streamingReviewCallback, false, forcedType, false);
     nbgl_refresh();
 }
 
@@ -1503,7 +1523,7 @@ static void displayInfoPage(nbgl_stepPosition_t pos)
         context.stepCallback = startUseCaseHome;
     }
 
-    drawStep(pos, icon, text, subText, infoCallback, false, FORCE_CENTERED_INFO, false);
+    drawStep(pos, icon, text, subText, 0, infoCallback, false, FORCE_CENTERED_INFO, false);
     nbgl_refresh();
 }
 
@@ -1545,7 +1565,8 @@ static void getContentPage(bool toogle_state, PageContent_t *contentPage)
                         &contentPage->subText,
                         &contentPage->extension,
                         &contentPage->icon,
-                        &contentPage->isCenteredInfo);
+                        &contentPage->isCenteredInfo,
+                        &contentPage->nbMaxLinesForSubText);
             break;
         case TAG_VALUE_CONFIRM:
             if (elemIdx < p_content->content.tagValueConfirm.tagValueList.nbPairs) {
@@ -1555,7 +1576,8 @@ static void getContentPage(bool toogle_state, PageContent_t *contentPage)
                             &contentPage->subText,
                             &contentPage->extension,
                             &contentPage->icon,
-                            &contentPage->isCenteredInfo);
+                            &contentPage->isCenteredInfo,
+                            &contentPage->nbMaxLinesForSubText);
             }
             else {
                 contentPage->text     = p_content->content.tagValueConfirm.confirmationText;
@@ -1692,6 +1714,7 @@ static void displaySettingsPage(nbgl_stepPosition_t pos, bool toogle_state)
                  contentPage.icon,
                  contentPage.text,
                  contentPage.subText,
+                 contentPage.nbMaxLinesForSubText,
                  settingsCallback,
                  false,
                  NO_FORCED_TYPE,
@@ -1877,7 +1900,7 @@ static void displayHomePage(nbgl_stepPosition_t pos)
         context.stepCallback = context.home.quitCallback;
     }
 
-    drawStep(pos, icon, text, subText, homeCallback, false, NO_FORCED_TYPE, false);
+    drawStep(pos, icon, text, subText, 0, homeCallback, false, NO_FORCED_TYPE, false);
     nbgl_refresh();
 }
 
@@ -1986,7 +2009,7 @@ static void displayChoicePage(nbgl_stepPosition_t pos)
     }
     // other detail types (non-BAR_LIST) are not navigated on Nano
 
-    drawStep(pos, icon, text, subText, genericChoiceCallback, false, NO_FORCED_TYPE, false);
+    drawStep(pos, icon, text, subText, 0, genericChoiceCallback, false, NO_FORCED_TYPE, false);
     nbgl_refresh();
 }
 
@@ -2018,7 +2041,7 @@ static void displayConfirm(nbgl_stepPosition_t pos)
             break;
     }
 
-    drawStep(pos, icon, text, subText, genericConfirmCallback, true, NO_FORCED_TYPE, false);
+    drawStep(pos, icon, text, subText, 0, genericConfirmCallback, true, NO_FORCED_TYPE, false);
     nbgl_refresh();
 }
 
@@ -2062,6 +2085,7 @@ static void displayContent(nbgl_stepPosition_t pos, bool toogle_state)
                  contentPage.icon,
                  contentPage.text,
                  contentPage.subText,
+                 contentPage.nbMaxLinesForSubText,
                  contentCallback,
                  false,
                  forcedType,
@@ -2073,7 +2097,7 @@ static void displayContent(nbgl_stepPosition_t pos, bool toogle_state)
 
 static void displaySpinner(const char *text)
 {
-    drawStep(SINGLE_STEP, &C_icon_processing, text, NULL, NULL, false, NO_FORCED_TYPE, false);
+    drawStep(SINGLE_STEP, &C_icon_processing, text, NULL, 0, NULL, false, NO_FORCED_TYPE, false);
     nbgl_refresh();
 }
 
@@ -2980,6 +3004,7 @@ void nbgl_useCaseStatus(const char *message, bool isSuccess, nbgl_callback_t qui
              NULL,
              message,
              NULL,
+             0,
              statusButtonCallback,
              false,
              NO_FORCED_TYPE,
