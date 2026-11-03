@@ -3,8 +3,8 @@
  * command may reach the app, whatever transport it comes from, and a CTAPHID_CANCEL only
  * reaches a pending CTAP2 command.
  *
- * Built for the in-app IO stack (no USE_OS_IO_STACK), where a USB class can still read a reply
- * from the app's buffer after os_io_tx_cmd() returns.
+ * Built for the in-app IO stack (no USE_OS_IO_STACK), where a USB class or the BLE profile can
+ * still read a reply from the app's buffer after os_io_tx_cmd() returns.
  *
  * The source is included to reach its static state. The OS calls are fakes: one packet is
  * queued for os_io_rx_app_evt(), and os_io_tx_cmd() records what is sent.
@@ -45,6 +45,9 @@ int32_t os_io_rx_evt(uint8_t  *buffer,
     (void) check_se_event;
     int length       = rx_packet_length;
     rx_packet_length = 0;
+    if (length < 0) {
+        return length;
+    }
     TEST_ASSERT_LESS_OR_EQUAL_INT(buffer_max_length, length);
     memcpy(buffer, rx_packet, length);
     return length;
@@ -83,14 +86,26 @@ int32_t USBD_LEDGER_is_busy(void)
     return usb_busy;
 }
 
+// Whether the BLE profile still reads a reply from the app's buffer.
+static bool ble_busy;
+
+bool BLE_LEDGER_is_busy(void)
+{
+    return ble_busy;
+}
+
+// Whether a PIN is set, and whether it was entered.
+static bolos_bool_t pin_set;
+static bolos_bool_t pin_validated;
+
 bolos_bool_t os_perso_is_pin_set(void)
 {
-    return BOLOS_FALSE;
+    return pin_set;
 }
 
 bolos_bool_t os_global_pin_is_validated(void)
 {
-    return BOLOS_TRUE;
+    return pin_validated;
 }
 
 bolos_err_t os_io_handle_default_apdu(uint8_t                  *buffer_in,
@@ -107,17 +122,26 @@ bolos_err_t os_io_handle_default_apdu(uint8_t                  *buffer_in,
     return SWO_SUCCESS;
 }
 
+static int io_event_count;
+
 unsigned char io_event(unsigned char channel)
 {
     (void) channel;
+    io_event_count++;
     return 0;
 }
+
+// What the ITC handler returns, and the length it was given.
+static int    itc_status;
+static size_t itc_length;
+static int    itc_count;
 
 int io_process_itc_ux_event(uint8_t *buffer_in, size_t buffer_in_length)
 {
     (void) buffer_in;
-    (void) buffer_in_length;
-    return 0;
+    itc_length = buffer_in_length;
+    itc_count++;
+    return itc_status;
 }
 
 int os_io_init(os_io_init_t *init)
@@ -189,6 +213,9 @@ static void assert_pending_untouched(const uint8_t  *command,
 void setUp(void)
 {
     usb_busy           = false;
+    ble_busy           = false;
+    pin_set            = BOLOS_FALSE;
+    pin_validated      = BOLOS_TRUE;
     io_reply_in_flight = false;
     os_io_set_reply_pending(false);
     io_os_legacy_apdu_type = APDU_TYPE_NONE;
@@ -197,6 +224,10 @@ void setUp(void)
     memset(G_io_tx_buffer, 0, sizeof(G_io_tx_buffer));
     rx_packet_length = 0;
     sent_count       = 0;
+    io_event_count   = 0;
+    itc_status       = 0;
+    itc_length       = 0;
+    itc_count        = 0;
 }
 
 void tearDown(void) {}
@@ -369,10 +400,30 @@ void test_cdc_input_reaches_the_app_when_idle(void)
 {
     static const uint8_t at_cmd[] = {'A', 'T', '+', 'X'};
 
-    TEST_ASSERT_GREATER_THAN_INT(0, receive(OS_IO_PACKET_TYPE_AT_CMD, at_cmd, sizeof(at_cmd)));
+    TEST_ASSERT_EQUAL_INT(sizeof(at_cmd),
+                          receive(OS_IO_PACKET_TYPE_AT_CMD, at_cmd, sizeof(at_cmd)));
     TEST_ASSERT_EQUAL_HEX8_ARRAY(at_cmd, G_io_apdu_buffer, sizeof(at_cmd));
     TEST_ASSERT_FALSE(os_io_reply_pending());
     TEST_ASSERT_EQUAL_INT(0, sent_count);
+}
+
+// USB CDC input must not reach the app while the device is locked, as no APDU may.
+void test_cdc_input_while_locked_is_dropped(void)
+{
+    static const uint8_t at_cmd[] = {'A', 'T', '+', 'X'};
+
+    memset(G_io_apdu_buffer, 0, sizeof(at_cmd));
+    pin_set       = BOLOS_TRUE;
+    pin_validated = BOLOS_FALSE;
+
+    TEST_ASSERT_EQUAL_INT(0, receive(OS_IO_PACKET_TYPE_AT_CMD, OTHER_APDU, sizeof(OTHER_APDU)));
+    TEST_ASSERT_EACH_EQUAL_HEX8(0, G_io_apdu_buffer, sizeof(OTHER_APDU));
+    TEST_ASSERT_FALSE(os_io_reply_pending());
+    TEST_ASSERT_EQUAL_INT(0, sent_count);
+
+    pin_validated = BOLOS_TRUE;
+    TEST_ASSERT_EQUAL_INT(sizeof(at_cmd),
+                          receive(OS_IO_PACKET_TYPE_AT_CMD, at_cmd, sizeof(at_cmd)));
 }
 
 // os_io_tx_cmd() returned, but USB still sends the reply from G_io_tx_buffer: a command from
@@ -395,6 +446,30 @@ void test_gate_stays_closed_until_usb_has_read_the_reply(void)
     usb_busy = false;
     TEST_ASSERT_EQUAL_INT(sizeof(OTHER_APDU),
                           receive(OS_IO_PACKET_TYPE_BLE_APDU, OTHER_APDU, sizeof(OTHER_APDU)));
+    TEST_ASSERT_TRUE(os_io_reply_pending());
+    TEST_ASSERT_EQUAL_INT(2, sent_count);
+}
+
+// Same over BLE: its next chunks are read from G_io_tx_buffer as the peer acks them.
+void test_gate_stays_closed_until_ble_has_read_the_reply(void)
+{
+    static const uint8_t reply[] = {0x01, 0x02, 0x03, 0x04, 0x90, 0x00};
+
+    receive(OS_IO_PACKET_TYPE_BLE_APDU, HID_APDU, sizeof(HID_APDU));
+    memcpy(G_io_tx_buffer, reply, sizeof(reply));
+    ble_busy = true;
+    io_legacy_apdu_tx(G_io_tx_buffer, sizeof(reply));
+    TEST_ASSERT_TRUE(os_io_reply_pending());
+
+    TEST_ASSERT_EQUAL_INT(0,
+                          receive(OS_IO_PACKET_TYPE_USB_HID_APDU, OTHER_APDU, sizeof(OTHER_APDU)));
+    TEST_ASSERT_EQUAL_UINT8(OS_IO_PACKET_TYPE_USB_HID_APDU, sent[1].type);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY_MESSAGE(reply, G_io_tx_buffer, sizeof(reply), "reply overwritten");
+
+    // The peer has acked the last chunk: the next command is taken.
+    ble_busy = false;
+    TEST_ASSERT_EQUAL_INT(sizeof(OTHER_APDU),
+                          receive(OS_IO_PACKET_TYPE_USB_HID_APDU, OTHER_APDU, sizeof(OTHER_APDU)));
     TEST_ASSERT_TRUE(os_io_reply_pending());
     TEST_ASSERT_EQUAL_INT(2, sent_count);
 }
@@ -441,6 +516,99 @@ void test_reply_reopens_the_gate(void)
     TEST_ASSERT_EQUAL_INT(1, sent_count);
 }
 
+/* io_seph_recv --------------------------------------------------------------*/
+
+#define CANARY      0xA5
+#define SEPH_ROOM   8
+#define SEPH_GUARDS 4
+
+// The caller's buffer: SEPH_ROOM bytes it hands over, then guard bytes it does not.
+static uint8_t seph_dest[SEPH_ROOM + SEPH_GUARDS];
+
+static unsigned short seph_receive(uint8_t type, const uint8_t *payload, size_t length)
+{
+    memset(seph_dest, CANARY, sizeof(seph_dest));
+    rx_packet[0] = type;
+    if (length) {
+        memcpy(&rx_packet[1], payload, length);
+    }
+    rx_packet_length = length + 1;
+    return io_seph_recv(seph_dest, SEPH_ROOM, 0);
+}
+
+static void assert_guards_intact(size_t from)
+{
+    for (size_t i = from; i < sizeof(seph_dest); i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(CANARY, seph_dest[i], "caller buffer overflowed");
+    }
+}
+
+void test_seph_event_larger_than_the_buffer_is_dropped(void)
+{
+    uint8_t event[SEPH_ROOM + SEPH_GUARDS] = {SEPROXYHAL_TAG_ITC_EVENT};
+
+    TEST_ASSERT_EQUAL_UINT16(0, seph_receive(OS_IO_PACKET_TYPE_SEPH, event, SEPH_ROOM + 1));
+    assert_guards_intact(0);
+    TEST_ASSERT_EQUAL_INT(0, itc_count);
+    TEST_ASSERT_EQUAL_INT(0, io_event_count);
+
+    TEST_ASSERT_EQUAL_UINT16(0, seph_receive(OS_IO_PACKET_TYPE_SE_EVT, event, sizeof(event)));
+    assert_guards_intact(0);
+}
+
+void test_seph_event_filling_the_buffer_is_received(void)
+{
+    uint8_t event[SEPH_ROOM] = {SEPROXYHAL_TAG_BUTTON_PUSH_EVENT, 0x00, 0x01, 0x02};
+
+    TEST_ASSERT_EQUAL_UINT16(0, seph_receive(OS_IO_PACKET_TYPE_SEPH, event, sizeof(event)));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(event, seph_dest, sizeof(event));
+    assert_guards_intact(SEPH_ROOM);
+    TEST_ASSERT_EQUAL_INT(1, io_event_count);
+}
+
+void test_itc_event_is_handed_its_length(void)
+{
+    static const uint8_t event[] = {SEPROXYHAL_TAG_ITC_EVENT, 0x00, 0x01, 0x00};
+
+    itc_status = sizeof(event);
+    TEST_ASSERT_EQUAL_UINT16(sizeof(event),
+                             seph_receive(OS_IO_PACKET_TYPE_SEPH, event, sizeof(event)));
+    TEST_ASSERT_EQUAL_INT(1, itc_count);
+    TEST_ASSERT_EQUAL_size_t(sizeof(event), itc_length);
+    assert_guards_intact(sizeof(event));
+}
+
+void test_itc_error_is_not_a_length(void)
+{
+    static const uint8_t event[] = {SEPROXYHAL_TAG_ITC_EVENT, 0x00, 0x01, 0x00};
+
+    itc_status = -22;
+    TEST_ASSERT_EQUAL_UINT16(0, seph_receive(OS_IO_PACKET_TYPE_SEPH, event, sizeof(event)));
+}
+
+void test_empty_seph_event_reads_no_tag(void)
+{
+    G_io_rx_buffer[1] = SEPROXYHAL_TAG_ITC_EVENT;  // left over from an earlier packet
+    TEST_ASSERT_EQUAL_UINT16(0, seph_receive(OS_IO_PACKET_TYPE_SEPH, NULL, 0));
+    TEST_ASSERT_EQUAL_INT(0, itc_count);
+    assert_guards_intact(0);
+}
+
+void test_apdu_packet_is_not_a_seph_length(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(
+        0, seph_receive(OS_IO_PACKET_TYPE_USB_HID_APDU, HID_APDU, sizeof(HID_APDU)));
+    assert_guards_intact(0);
+}
+
+void test_receive_error_is_not_a_length(void)
+{
+    memset(seph_dest, CANARY, sizeof(seph_dest));
+    rx_packet_length = -1;
+    TEST_ASSERT_EQUAL_UINT16(0, io_seph_recv(seph_dest, SEPH_ROOM, 0));
+    assert_guards_intact(0);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -458,9 +626,18 @@ int main(void)
     RUN_TEST(test_received_raw_packet_is_ignored);
     RUN_TEST(test_cdc_input_during_review_is_dropped);
     RUN_TEST(test_cdc_input_reaches_the_app_when_idle);
+    RUN_TEST(test_cdc_input_while_locked_is_dropped);
     RUN_TEST(test_gate_stays_closed_until_usb_has_read_the_reply);
+    RUN_TEST(test_gate_stays_closed_until_ble_has_read_the_reply);
     RUN_TEST(test_cbor_reply_in_flight_closes_cancel_but_not_the_gate);
     RUN_TEST(test_usb_busy_without_pending_command_keeps_the_gate_open);
     RUN_TEST(test_reply_reopens_the_gate);
+    RUN_TEST(test_seph_event_larger_than_the_buffer_is_dropped);
+    RUN_TEST(test_seph_event_filling_the_buffer_is_received);
+    RUN_TEST(test_itc_event_is_handed_its_length);
+    RUN_TEST(test_itc_error_is_not_a_length);
+    RUN_TEST(test_empty_seph_event_reads_no_tag);
+    RUN_TEST(test_apdu_packet_is_not_a_seph_length);
+    RUN_TEST(test_receive_error_is_not_a_length);
     return UNITY_END();
 }

@@ -543,6 +543,9 @@ extern bolos_ux_params_t G_ux_params;
 typedef struct ux_seph_s {
     unsigned int button_mask;
     unsigned int button_same_mask_counter;
+    // set when a new screen is displayed while a button is held: button events are ignored until
+    // all buttons are released, so that a gesture started on a previous screen can't act on it
+    unsigned int button_wait_release;
 #ifdef HAVE_BOLOS
     unsigned int ux_id;
     unsigned int ux_status;

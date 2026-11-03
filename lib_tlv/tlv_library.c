@@ -321,8 +321,16 @@ bool get_buffer_from_tlv_data(const tlv_data_t *data,
         PRINTF("Expected at most %d bytes, found %d\n", max_size, data->value.size);
         return false;
     }
-    out->size = data->value.size;
-    out->ptr  = data->value.ptr;
+    if (data->value.size != 0 && data->value.ptr == NULL) {
+        PRINTF("Non-empty TLV value has a NULL pointer\n");
+        return false;
+    }
+    // Fully initialize the output, the caller is not required to pre-zero it
+    *out = (buffer_t){
+        .ptr    = data->value.ptr,
+        .size   = data->value.size,
+        .offset = 0,
+    };
     return true;
 }
 
@@ -524,8 +532,8 @@ bool _parse_tlv_internal(const _internal_tlv_handler_t *handlers,
                          void                          *tlv_out,
                          TLV_reception_t               *received_tags_flags)
 {
-    tlv_step_t                     step = TLV_TAG;
-    tlv_data_t                     data;
+    tlv_step_t                     step   = TLV_TAG;
+    tlv_data_t                     data   = {0};
     size_t                         offset = 0;
     size_t                         tag_start_offset;
     const _internal_tlv_handler_t *handler;
@@ -570,8 +578,14 @@ bool _parse_tlv_internal(const _internal_tlv_handler_t *handlers,
                            payload->size);
                     return false;
                 }
+                // Fully (re)build the views given to the handlers: they are exposed as regular
+                // buffer_t, so their offset must start at 0 for buffer_read_* to be correct
+                data.value = (buffer_t){
+                    .ptr    = (data.value.size > 0) ? &payload->ptr[offset] : NULL,
+                    .size   = data.value.size,
+                    .offset = 0,
+                };
                 if (data.value.size > 0) {
-                    data.value.ptr = &payload->ptr[offset];
                     PRINTF("Handling tag 0x%02x length %d value '%.*H'\n",
                            data.tag,
                            data.value.size,
@@ -579,14 +593,16 @@ bool _parse_tlv_internal(const _internal_tlv_handler_t *handlers,
                            data.value.ptr);
                 }
                 else {
-                    data.value.ptr = NULL;
                     PRINTF("Handling tag 0x%02x length %d\n", data.tag, data.value.size);
                 }
                 offset += data.value.size;
 
                 // Calculate raw TLV start/end to give to the handler
-                data.raw.ptr  = &payload->ptr[tag_start_offset];
-                data.raw.size = offset - tag_start_offset;
+                data.raw = (buffer_t){
+                    .ptr    = &payload->ptr[tag_start_offset],
+                    .size   = offset - tag_start_offset,
+                    .offset = 0,
+                };
 
                 // Check for duplicate tag
                 flag = received_tags_flags->tag_to_flag_function(data.tag);

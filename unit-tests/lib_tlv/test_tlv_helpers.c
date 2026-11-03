@@ -270,6 +270,30 @@ void test_unsigned_tlv_buffer_readers(void)
     // Invalid: NULL pointers
     TEST_ASSERT_FALSE(get_buffer_from_tlv_data(NULL, &out, 0, 0));
     TEST_ASSERT_FALSE(get_buffer_from_tlv_data(&tlv_data, NULL, 0, 0));
+
+    // Valid: a stale offset in the output must not survive
+    out.offset = SIZE_MAX;
+    TEST_ASSERT_TRUE(get_buffer_from_tlv_data(&tlv_data, &out, 0, 0));
+    TEST_ASSERT_EQUAL_PTR(out.ptr, tlv_data.value.ptr);
+    TEST_ASSERT_EQUAL_INT(out.size, 3);
+    TEST_ASSERT_EQUAL_INT(out.offset, 0);
+
+    // Valid: empty value
+    tlv_data_t empty_data = {
+        .tag   = 0xAB,
+        .value = {.ptr = NULL, .size = 0, .offset = 0},
+    };
+    out.offset = 1;
+    TEST_ASSERT_TRUE(get_buffer_from_tlv_data(&empty_data, &out, 0, 0));
+    TEST_ASSERT_EQUAL_INT(out.size, 0);
+    TEST_ASSERT_EQUAL_INT(out.offset, 0);
+
+    // Invalid: non-empty value with a NULL pointer
+    tlv_data_t null_data = {
+        .tag   = 0xAB,
+        .value = {.ptr = NULL, .size = 3, .offset = 0},
+    };
+    TEST_ASSERT_FALSE(get_buffer_from_tlv_data(&null_data, &out, 0, 0));
 }
 
 #define MAKE_TLV(str, len)                                               \

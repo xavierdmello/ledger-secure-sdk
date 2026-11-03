@@ -1,6 +1,5 @@
 
 #include <string.h>
-#include <stdio.h>
 
 #include "os_math.h"
 #include "os_screen.h"
@@ -226,12 +225,10 @@ static void circle_common_init(bagl_anim_t *anim, const unsigned char *label, si
     /* <--    len     --><-- len(DELIMITER) --><--    len    -->
        [     label      ][                    ][     label     ] */
 
+    // At least two iterations are guaranteed by bagl_animation_init()
     while ((anim->len + len + sizeof(DELIMITER)) < MAX_LABEL_SIZE) {
-        snprintf((char *) (anim->label + anim->len),
-                 sizeof(anim->label) - anim->len,
-                 "%s%s",
-                 label,
-                 DELIMITER);
+        memcpy(anim->label + anim->len, label, len);
+        memcpy(anim->label + anim->len + len, DELIMITER, sizeof(DELIMITER));
         anim->len += len + sizeof(DELIMITER);
     }
     anim->len -= sizeof(DELIMITER);
@@ -307,8 +304,25 @@ void bagl_animation_init(bagl_anim_t         *anim,
                          const unsigned char *label,
                          size_t               len)
 {
-    anim->type = type;
-    memset(anim->label, 0, MAX_LABEL_SIZE);
+    if (anim == NULL) {
+        return;
+    }
+    memset(anim, 0, sizeof(*anim));
+    anim->type = ANIMATION_TYPE_END;
+
+    // Reject labels that cannot fit in anim->label, an animation left with
+    // ANIMATION_TYPE_END and a zero length draws nothing
+    if ((type >= ANIMATION_TYPE_END) || (label == NULL) || (len > MAX_LABEL_SIZE)) {
+        return;
+    }
+    // Circle animations need room for two label + delimiter patterns, so that
+    // circle.char_idx_limit (end of the first delimiter) stays below anim->len
+    if (((type == ANIMATION_TYPE_CIRCLE_RL) || (type == ANIMATION_TYPE_CIRCLE_LR))
+        && ((len == 0) || ((2 * (len + sizeof(DELIMITER))) >= MAX_LABEL_SIZE))) {
+        return;
+    }
+
+    anim->type       = type;
     anim->max_char_w = bagl_compute_line_width(component.font_id, 0, "W", 1, ENCODING) + 1;
 
     switch (anim->type) {
