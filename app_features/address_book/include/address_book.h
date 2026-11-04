@@ -47,6 +47,17 @@ typedef enum {
 /* Exported defines   --------------------------------------------------------*/
 
 /**
+ * @brief Max number of lines (nbMaxLinesForValue) of a review value displayed as an
+ * ADDRESS_BOOK_ALIAS (contact or Ledger Account name in place of its address): cut with "..."
+ * beyond
+ */
+#ifdef SCREEN_SIZE_WALLET
+#define ADDRESS_BOOK_ALIAS_MAX_LINES 2
+#else
+#define ADDRESS_BOOK_ALIAS_MAX_LINES 3
+#endif
+
+/**
  * Minimum IO APDU buffer size when HAVE_ADDRESS_BOOK is defined.
  *
  * Worst case: CMD_EDIT_IDENTIFIER (P1=0x03), Ethereum, max path depth, max identifiers:
