@@ -695,6 +695,51 @@ static void test_alias_list_pair_max_lines_is_forwarded(void)
     TEST_ASSERT_EQUAL_UINT8(2, pair_max_lines[11]);
 }
 
+// pairs of the alias list using a callback (pairs 10 and 11), retrieved from index 40
+#define ALIAS_CALLBACK_START_INDEX 40
+
+static nbgl_contentTagValue_t *get_alias_pair(uint8_t pairIndex)
+{
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT8(ALIAS_CALLBACK_START_INDEX, pairIndex);
+    TEST_ASSERT_LESS_THAN_UINT8(ALIAS_CALLBACK_START_INDEX + 2, pairIndex);
+    return &pairs[10 + pairIndex - ALIAS_CALLBACK_START_INDEX];
+}
+
+static void test_alias_list_with_callback_is_displayed(void)
+{
+    static nbgl_contentTagValueList_t aliasList;
+    static nbgl_contentValueExt_t     listExtension;
+
+    // the extension of pair 0 is a list using a callback, giving pairs 10 (no max) and 11 (with
+    // a max), from its startIndex
+    aliasList                    = make_tag_value_list(2);
+    aliasList.pairs              = NULL;
+    aliasList.callback           = get_alias_pair;
+    aliasList.startIndex         = ALIAS_CALLBACK_START_INDEX;
+    pairs[11].nbMaxLinesForValue = 2;
+    memset(&listExtension, 0, sizeof(listExtension));
+    listExtension.aliasType    = TAG_VALUE_LIST_ALIAS;
+    listExtension.tagValuelist = &aliasList;
+    pairs[0].aliasValue        = 1;
+    pairs[0].extension         = &listExtension;
+
+    review(1, NULL);
+    press(BUTTON_RIGHT_PRESSED);
+    TEST_ASSERT_EQUAL_INT(0, displayed_pair());
+    // display the pairs of the extension
+    press(BUTTON_BOTH_PRESSED);
+    TEST_ASSERT_EQUAL_INT(10, displayed_pair());
+    TEST_ASSERT_EQUAL_PTR(pairs[10].value, last_subtext);
+    press(BUTTON_RIGHT_PRESSED);
+    TEST_ASSERT_EQUAL_INT(11, displayed_pair());
+    TEST_ASSERT_EQUAL_PTR(pairs[11].value, last_subtext);
+    TEST_ASSERT_EQUAL_UINT8(0, pair_max_lines[10]);
+    TEST_ASSERT_EQUAL_UINT8(2, pair_max_lines[11]);
+    // then the back page
+    press(BUTTON_RIGHT_PRESSED);
+    TEST_ASSERT_EQUAL_PTR(&C_icon_back_x, last_icon);
+}
+
 // ============================================================================
 // nbgl_useCaseChoiceWithDetails: intro pages + bar pages + confirm/cancel
 // ============================================================================
@@ -907,6 +952,7 @@ int main(void)
     RUN_TEST(test_streaming_pair_max_lines_is_forwarded);
     RUN_TEST(test_generic_review_pair_max_lines_is_forwarded);
     RUN_TEST(test_alias_list_pair_max_lines_is_forwarded);
+    RUN_TEST(test_alias_list_with_callback_is_displayed);
     RUN_TEST(test_choice_overflow_is_rejected);
     RUN_TEST(test_choice_first_overflowing_count_is_rejected);
     RUN_TEST(test_choice_max_bars_reaches_confirm_and_cancel);
