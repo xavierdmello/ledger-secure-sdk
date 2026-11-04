@@ -1143,14 +1143,26 @@ static void displayExtensionStep(nbgl_stepPosition_t pos)
                 text     = PIC(infoList->infoTypes[context.review.currentExtensionPage]);
                 subText  = PIC(infoList->infoContents[context.review.currentExtensionPage]);
                 break;
-            case TAG_VALUE_LIST_ALIAS:
+            case TAG_VALUE_LIST_ALIAS: {
+                // the pair may be retrieved with the callback of the list (when pairs is NULL)
+                const nbgl_contentValueExt_t *pairExtension;
+                const nbgl_icon_details_t    *pairIcon;
+                bool                          pairIsCenteredInfo = false;
+
                 tagValueList = context.review.extension->tagValuelist;
-                text         = PIC(tagValueList->pairs[context.review.currentExtensionPage].item);
-                subText      = PIC(tagValueList->pairs[context.review.currentExtensionPage].value);
                 // these values are tag/value pairs, so their max number of lines applies
-                nbMaxLines
-                    = tagValueList->pairs[context.review.currentExtensionPage].nbMaxLinesForValue;
+                getPairData(tagValueList,
+                            context.review.currentExtensionPage,
+                            &text,
+                            &subText,
+                            &pairExtension,
+                            &pairIcon,
+                            &pairIsCenteredInfo,
+                            &nbMaxLines);
+                text    = PIC(text);
+                subText = PIC(subText);
                 break;
+            }
             default:
                 break;
         }

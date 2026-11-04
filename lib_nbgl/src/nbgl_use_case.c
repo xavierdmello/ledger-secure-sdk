@@ -532,6 +532,17 @@ static nbgl_contentTagValue_t *getCurrentPageTagValuePair(uint8_t pairIndex)
     return (nbgl_contentTagValue_t *) getTagValuePair(&tagValueList, pairIndex);
 }
 
+// Callback given to the layer drawing a modal page of a TAG_VALUE_LIST_ALIAS alias, to retrieve
+// its pairs from the callback of the alias list, with the same empty pair fallback.
+// (genericContext.currentCallback can't be used, it is the one of the review page behind the modal)
+static nbgl_contentTagValue_t *getModalTagValuePair(uint8_t pairIndex)
+{
+    nbgl_contentTagValueList_t tagValueList = {0};
+
+    tagValueList.callback = genericContext.currentTagValues->callback;
+    return (nbgl_contentTagValue_t *) getTagValuePair(&tagValueList, pairIndex);
+}
+
 // Helper to check that all pairs of a tag/value list retrieved with a callback are provided by it,
 // with an index fitting in uint8_t (from startIndex to startIndex + nbPairs - 1).
 // A NULL list is valid: callers where the list is mandatory must reject it themselves.
@@ -1720,17 +1731,22 @@ static void displayTagValueListModalPage(uint8_t pageIdx, bool forceFullRefresh)
     detailsContext.currentPage = pageIdx;
 
     content.tagValueList.nbPairs = nbElementsInPage;
-    // (lists using a callback are not drawn here, their pages are empty)
     if (genericContext.currentTagValues->pairs != NULL) {
         content.tagValueList.pairs
             = &genericContext.currentTagValues->pairs[detailsContext.currentPairIdx];
-        if (nbElementsInPage == 1) {
-            // a pair alone in its page may be too long to fit (see getNbTagValuesInDetailsPage()):
-            // its value is then truncated to the lines fitting in the page, ending with "..."
-            content.tagValueList.nbMaxLinesForValue = getNbLinesInDetailsPage(
-                getTagValuePair(genericContext.currentTagValues, detailsContext.currentPairIdx));
-            content.tagValueList.hideEndOfLastLine = true;
-        }
+    }
+    else {
+        // index of the pairs of the page is relative to the startIndex of the list
+        content.tagValueList.callback = getModalTagValuePair;
+        content.tagValueList.startIndex
+            = genericContext.currentTagValues->startIndex + detailsContext.currentPairIdx;
+    }
+    if (nbElementsInPage == 1) {
+        // a pair alone in its page may be too long to fit (see getNbTagValuesInDetailsPage()):
+        // its value is then truncated to the lines fitting in the page, ending with "..."
+        content.tagValueList.nbMaxLinesForValue = getNbLinesInDetailsPage(
+            getTagValuePair(genericContext.currentTagValues, detailsContext.currentPairIdx));
+        content.tagValueList.hideEndOfLastLine = true;
     }
     detailsContext.currentPairIdx += nbElementsInPage;
     if (info.nbPages == 1) {

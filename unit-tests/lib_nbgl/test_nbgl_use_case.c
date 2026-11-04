@@ -1338,14 +1338,28 @@ static void openAliasListModal(void)
 }
 
 // Goes through all modal pages, checking that each page contains at least one pair and that all
-// pairs are displayed once. If pairHeight is not 0, also checks that the pairs fit in each page
+// pairs are displayed once. If pairHeight is not 0, also checks that the pairs fit in each page.
+// If the alias list uses a callback, the pairs of each page must be retrieved with the callback of
+// the page, from its startIndex
 static void checkAliasListModalPages(uint16_t pairHeight)
 {
     uint8_t nbPairsDrawn = 0;
     for (uint8_t page = 0; page < modal_nav.nbPages; page++) {
         uint8_t nbPairs = modal_content.tagValueList.nbPairs;
         TEST_ASSERT_EQUAL(TAG_VALUE_LIST, modal_content.type);
-        TEST_ASSERT_EQUAL_PTR(&aliasListPairs[nbPairsDrawn], modal_content.tagValueList.pairs);
+        if (aliasList.pairs != NULL) {
+            TEST_ASSERT_EQUAL_PTR(&aliasListPairs[nbPairsDrawn], modal_content.tagValueList.pairs);
+        }
+        else {
+            const nbgl_contentTagValueList_t *drawn = &modal_content.tagValueList;
+            TEST_ASSERT_NULL(drawn->pairs);
+            TEST_ASSERT_NOT_NULL(drawn->callback);
+            TEST_ASSERT_EQUAL_UINT8(aliasList.startIndex + nbPairsDrawn, drawn->startIndex);
+            for (uint8_t i = 0; i < nbPairs; i++) {
+                TEST_ASSERT_EQUAL_PTR(&aliasListPairs[nbPairsDrawn + i],
+                                      drawn->callback(drawn->startIndex + i));
+            }
+        }
         TEST_ASSERT_GREATER_THAN_UINT8(0, nbPairs);
         if (pairHeight > 0) {
             TEST_ASSERT_LESS_THAN_UINT16(TAG_VALUE_AREA_HEIGHT,
@@ -1388,34 +1402,62 @@ void test_alias_list_modal_pair_too_long_has_its_page(void)
     checkAliasListModalPages(0);
 }
 
+// first index given to the callback of the alias list (its startIndex)
+#define ALIAS_LIST_START_INDEX 20
+
 static nbgl_contentTagValue_t *getAliasListPair(uint8_t pairIndex)
 {
-    return &aliasListPairs[pairIndex];
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT8(ALIAS_LIST_START_INDEX, pairIndex);
+    TEST_ASSERT_LESS_THAN_UINT8(ALIAS_LIST_START_INDEX + NB_ALIAS_LIST_PAIRS, pairIndex);
+    return &aliasListPairs[pairIndex - ALIAS_LIST_START_INDEX];
+}
+
+// Changes the alias list built by buildAliasList() to a list using a callback
+static void useAliasListCallback(void)
+{
+    aliasList.pairs      = NULL;
+    aliasList.callback   = getAliasListPair;
+    aliasList.startIndex = ALIAS_LIST_START_INDEX;
+}
+
+void test_alias_list_modal_with_callback(void)
+{
+    // the pairs of an alias list using a callback are split in pages as the static ones, and each
+    // modal page gets them with the callback, from startIndex. The callback of the page gives the
+    // pairs of the application as is (same pointers), so their own nbMaxLinesForValue reaches
+    // the layout
+    buildAliasList();
+    useAliasListCallback();
+    openAliasListModal();
+    TEST_ASSERT_GREATER_THAN_UINT8(1, modal_nav.nbPages);
+    // height of a pair as drawn: tag, space, and value on 2 lines
+    checkAliasListModalPages(TEXT_HEIGHT + TAG_VALUE_INTERVALE + 2 * TEXT_HEIGHT);
 }
 
 void test_alias_list_modal_with_callback_pair_too_long(void)
 {
-    // the details of an alias list using a callback are not drawn (empty pages): pairs too long
-    // to fit in a page must not be read through the NULL pairs, in any page
+    // pairs too long to fit in a page of an alias list using a callback are alone in their page
+    // and truncated, as the static ones
     buildAliasList();
     aliasListPairs[0].value = LONG_VALUE;
     aliasListPairs[1].value = LONG_VALUE;
-    aliasList.pairs         = NULL;
-    aliasList.callback      = getAliasListPair;
+    useAliasListCallback();
     openAliasListModal();
     TEST_ASSERT_GREATER_THAN_UINT8(2, modal_nav.nbPages);
-    for (uint8_t page = 0; page < modal_nav.nbPages; page++) {
+    for (uint8_t page = 0; page < 2; page++) {
         if (page > 0) {
             modal_callback(modal_nav.navWithButtons.navToken, page);
         }
-        TEST_ASSERT_EQUAL(TAG_VALUE_LIST, modal_content.type);
-        TEST_ASSERT_NULL(modal_content.tagValueList.pairs);
-        TEST_ASSERT_EQUAL_UINT8(0, modal_content.tagValueList.nbMaxLinesForValue);
-        if (page < 2) {
-            // each too long pair is alone in its page
-            TEST_ASSERT_EQUAL_UINT8(1, modal_content.tagValueList.nbPairs);
-        }
+        TEST_ASSERT_EQUAL_UINT8(1, modal_content.tagValueList.nbPairs);
+        TEST_ASSERT_GREATER_THAN_UINT8(0, modal_content.tagValueList.nbMaxLinesForValue);
+        TEST_ASSERT_LESS_THAN_UINT8(LONG_VALUE_NB_LINES,
+                                    modal_content.tagValueList.nbMaxLinesForValue);
+        TEST_ASSERT_TRUE(modal_content.tagValueList.hideEndOfLastLine);
     }
+    // open the modal again to check all pages from the first one: touching the alias calls
+    // displayTagValueListModal(), which resets detailsContext
+    openAliasListModal();
+    checkAliasListModalPages(0);
 }
 
 // ============================================================================
@@ -1615,6 +1657,7 @@ int main(void)
     RUN_TEST(test_no_pair_max_lines_uses_details_page);
     RUN_TEST(test_alias_list_modal_pages_fit);
     RUN_TEST(test_alias_list_modal_pair_too_long_has_its_page);
+    RUN_TEST(test_alias_list_modal_with_callback);
     RUN_TEST(test_alias_list_modal_with_callback_pair_too_long);
     RUN_TEST(test_review_list_pages_split_with_drawn_font);
     RUN_TEST(test_review_confirm_pages_split_with_drawn_font);
