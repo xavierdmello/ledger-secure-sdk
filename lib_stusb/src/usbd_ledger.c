@@ -891,6 +891,15 @@ void USBD_LEDGER_setting(uint32_t class_id, uint32_t setting_id, uint8_t *buffer
     }
 }
 
+void USBD_LEDGER_ticker(void)
+{
+#ifdef HAVE_CCID_USB
+    if (is_running()) {
+        USBD_LEDGER_CCID_ticker(&usbd_ledger_data.usbd_handle);
+    }
+#endif  // HAVE_CCID_USB
+}
+
 int USBD_LEDGER_rx_seph_evt(uint8_t *seph_buffer,
                             uint16_t seph_buffer_length,
                             uint8_t *apdu_buffer,

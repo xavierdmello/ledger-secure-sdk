@@ -425,6 +425,11 @@ int io_legacy_apdu_rx(uint8_t handle_ux_events)
             case OS_IO_PACKET_TYPE_SE_EVT:
             case OS_IO_PACKET_TYPE_SEPH:
                 memcpy(G_io_seproxyhal_spi_buffer, &G_io_rx_buffer[1], status - 1);
+#ifdef HAVE_CCID_USB
+                if (G_io_rx_buffer[1] == SEPROXYHAL_TAG_TICKER_EVENT) {
+                    USBD_LEDGER_ticker();
+                }
+#endif  // HAVE_CCID_USB
                 if (G_io_rx_buffer[1] == SEPROXYHAL_TAG_ITC_EVENT) {
                     status = io_process_itc_ux_event(G_io_seproxyhal_spi_buffer, status - 1);
                 }

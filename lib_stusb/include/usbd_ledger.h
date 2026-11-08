@@ -101,6 +101,7 @@ uint32_t USBD_LEDGER_send(uint8_t        class_type,
 
 // Check data received
 int32_t USBD_LEDGER_data_ready(uint8_t *buffer, uint16_t max_length);
+void    USBD_LEDGER_ticker(void);
 
 // Check data sent
 int32_t USBD_LEDGER_is_busy(void);

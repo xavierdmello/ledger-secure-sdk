@@ -57,6 +57,12 @@ typedef struct {
     uint8_t alt_setting;
     uint8_t state;  // ledger_ccid_state_e
 
+    // Time extension: tells the host to keep waiting while the app holds a command
+    uint8_t apdu_pending;       // a command went to the app and has no reply yet
+    uint8_t wtx_ticks;          // ticks since the last time extension
+    uint8_t wtx_in_flight;      // a time extension is on the wire
+    uint8_t tx_after_wtx;       // the real reply is queued behind that time extension
+
     // Transport
     ccid_device_t device;
 } ledger_ccid_handle_t;
@@ -68,6 +74,7 @@ typedef struct {
 /* Private variables ---------------------------------------------------------*/
 static ledger_ccid_handle_t ledger_ccid_handle;
 static uint8_t              ledger_ccid_transport_packet_buffer[LEDGER_CCID_BULK_EPIN_SIZE];
+static uint8_t              ledger_ccid_wtx_packet_buffer[10];
 
 /* Exported variables --------------------------------------------------------*/
 const usbd_end_point_info_t LEDGER_CCID_Bulk_end_point_info = {
@@ -310,6 +317,21 @@ USBD_StatusTypeDef USBD_LEDGER_CCID_data_in(USBD_HandleTypeDef *pdev, void *cook
     UNUSED(ep_num);
 
     ledger_ccid_handle_t *handle = (ledger_ccid_handle_t *) PIC(cookie);
+    if (handle->wtx_in_flight) {
+        handle->wtx_in_flight = 0;
+        handle->state         = LEDGER_CCID_STATE_IDLE;
+        if (handle->tx_after_wtx) {
+            // Send the first packet of the reply, prepared while the time extension was in flight
+            handle->tx_after_wtx = 0;
+            handle->state        = LEDGER_CCID_STATE_BUSY;
+            USBD_LL_Transmit(pdev,
+                             LEDGER_CCID_BULK_EPIN_ADDR,
+                             ledger_ccid_transport_packet_buffer,
+                             handle->device.transport.tx_packet_length,
+                             0);
+        }
+        return USBD_OK;
+    }
     if (handle->device.transport.tx_message_buffer) {
         CCID_TRANSPORT_tx(&handle->device.transport,
                           NULL,
@@ -369,6 +391,8 @@ USBD_StatusTypeDef USBD_LEDGER_CCID_send_packet(USBD_HandleTypeDef *pdev,
     uint8_t               ret    = USBD_OK;
     ledger_ccid_handle_t *handle = (ledger_ccid_handle_t *) PIC(cookie);
 
+    handle->apdu_pending = 0;
+
     CCID_TRANSPORT_tx(&handle->device.transport,
                       packet,
                       packet_length,
@@ -376,7 +400,10 @@ USBD_StatusTypeDef USBD_LEDGER_CCID_send_packet(USBD_HandleTypeDef *pdev,
                       sizeof(ledger_ccid_transport_packet_buffer));
 
     if (pdev->dev_state == USBD_STATE_CONFIGURED) {
-        if (handle->state == LEDGER_CCID_STATE_IDLE) {
+        if (handle->wtx_in_flight) {
+            handle->tx_after_wtx = 1;
+        }
+        else if (handle->state == LEDGER_CCID_STATE_IDLE) {
             if (handle->device.transport.tx_packet_length) {
                 handle->state = LEDGER_CCID_STATE_BUSY;
                 ret           = USBD_LL_Transmit(pdev,
@@ -430,6 +457,9 @@ int32_t USBD_LEDGER_CCID_data_ready(USBD_HandleTypeDef *pdev,
         return status;
     }
 
+    handle->apdu_pending = 0;
+    handle->wtx_ticks    = 0;
+
     // Check slot
     if (handle->device.transport.bulk_msg_header.out.slot_number > 1) {
         // Bad slot
@@ -469,11 +499,49 @@ int32_t USBD_LEDGER_CCID_data_ready(USBD_HandleTypeDef *pdev,
                     handle->device.transport.rx_msg_buffer,
                     handle->device.transport.rx_msg_length);
             status = handle->device.transport.rx_msg_length + 1;
+            handle->apdu_pending = 1;
         }
     }
     handle->device.transport.rx_msg_status = CCID_MSG_STATUS_WAITING;
 
     return status;
+}
+
+
+#define LEDGER_CCID_WTX_PERIOD_TICKS (10)  // ticks are 100 ms apart
+
+void USBD_LEDGER_CCID_ticker(USBD_HandleTypeDef *pdev)
+{
+    ledger_ccid_handle_t *handle = &ledger_ccid_handle;
+
+    if (!pdev || !handle->apdu_pending || (pdev->dev_state != USBD_STATE_CONFIGURED)) {
+        return;
+    }
+    if (++handle->wtx_ticks < LEDGER_CCID_WTX_PERIOD_TICKS) {
+        return;
+    }
+    handle->wtx_ticks = 0;
+    if (handle->state != LEDGER_CCID_STATE_IDLE) {
+        return;
+    }
+
+    // RDR_to_PC_DataBlock with no data: bStatus = time extension requested, bError = BWT multiplier
+    const ccid_transport_t *transport = &handle->device.transport;
+    memset(ledger_ccid_wtx_packet_buffer, 0, sizeof(ledger_ccid_wtx_packet_buffer));
+    ledger_ccid_wtx_packet_buffer[0] = CCID_COMMAND_RDR_TO_PC_DATA_BLOCK;
+    ledger_ccid_wtx_packet_buffer[5] = transport->bulk_msg_header.out.slot_number;
+    ledger_ccid_wtx_packet_buffer[6] = transport->bulk_msg_header.out.seq_number;
+    ledger_ccid_wtx_packet_buffer[7]
+        = CCID_SLOT_STATUS_ICC_PRESENT_AND_ACTIVE | CCID_SLOT_STATUS_CMD_TIME_EXTENSION_REQUESTED;
+    ledger_ccid_wtx_packet_buffer[8] = 1;
+
+    handle->wtx_in_flight = 1;
+    handle->state         = LEDGER_CCID_STATE_BUSY;
+    USBD_LL_Transmit(pdev,
+                     LEDGER_CCID_BULK_EPIN_ADDR,
+                     ledger_ccid_wtx_packet_buffer,
+                     sizeof(ledger_ccid_wtx_packet_buffer),
+                     0);
 }
 
 #endif  // HAVE_CCID_USB

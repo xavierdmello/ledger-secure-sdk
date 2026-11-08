@@ -54,6 +54,7 @@ USBD_StatusTypeDef USBD_LEDGER_CCID_send_packet(USBD_HandleTypeDef *pdev,
                                                 uint16_t            packet_length,
                                                 uint32_t            timeout_ms);
 bool               USBD_LEDGER_CCID_is_busy(void *cookie);
+void               USBD_LEDGER_CCID_ticker(USBD_HandleTypeDef *pdev);
 
 int32_t USBD_LEDGER_CCID_data_ready(USBD_HandleTypeDef *pdev,
                                     void               *cookie,
